@@ -1,8 +1,8 @@
-# DRXStore v3.0.0 — Complete Pharmacy Management System
+# DRXStore v3.0.1 — Complete Pharmacy Management System
 
 **Developed by Vineet | ci.vps@proton.me**
 
-> Version 3.0.0 is a security-hardened release. All 19 reported issues have been resolved. Upgrading from 2.0.0 is strongly recommended.
+> Version 3.0.1 is a security-hardened release. All 19 reported issues have been resolved. Upgrading from 2.0.0 is strongly recommended.
 
 ---
 
@@ -128,4 +128,4 @@ Key protections in this release:
 
 ---
 
-*DRXStore v3.0.0 — Built with care by Vineet*
+*DRXStore v3.0.1 — Built with care by Vineet*

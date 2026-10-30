@@ -5,7 +5,7 @@
  */
 
 if (!defined('APP_NAME'))    define('APP_NAME',    'DRXStore');
-if (!defined('APP_VERSION')) define('APP_VERSION', '3.0.0');
+if (!defined('APP_VERSION')) define('APP_VERSION', '3.0.1');
 if (!defined('APP_AUTHOR'))  define('APP_AUTHOR',  'Vineet');
 if (!defined('ADMIN_EMAIL')) define('ADMIN_EMAIL', 'ci.vps@proton.me');
 
