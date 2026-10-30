@@ -13,8 +13,8 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         header('Location: index.php?p=discounts'); exit;
     }
 }
-if(get('action')==='delete'&&getInt('id')){$db->delete('discounts',fn($x)=>$x['id']===getInt('id'));setFlash('success','Deleted.');header('Location: index.php?p=discounts');exit;}
-if(get('action')==='toggle'&&getInt('id')){$d=$db->findOne('discounts',fn($x)=>$x['id']===getInt('id'));if($d)$db->update('discounts',fn($x)=>$x['id']===getInt('id'),['active'=>($d['active']?0:1)]);header('Location: index.php?p=discounts');exit;}
+if(get('action')==='delete'&&getInt('id')){ verifyCsrfGet(); $db->delete('discounts',fn($x)=>$x['id']===getInt('id'));setFlash('success','Deleted.');header('Location: index.php?p=discounts');exit;}
+if(get('action')==='toggle'&&getInt('id')){ verifyCsrfGet(); $d=$db->findOne('discounts',fn($x)=>$x['id']===getInt('id'));if($d)$db->update('discounts',fn($x)=>$x['id']===getInt('id'),['active'=>($d['active']?0:1)]);header('Location: index.php?p=discounts');exit;}
 $discs=$db->table('discounts');
 $edit=null; if(get('action')==='edit'&&getInt('id'))$edit=$db->findOne('discounts',fn($x)=>$x['id']===getInt('id'));
 adminHeader('Discounts','discounts');
@@ -34,8 +34,8 @@ adminHeader('Discounts','discounts');
       <td><?=($d['active']??0)?'<span class="chip chip-green">Active</span>':'<span class="chip chip-gray">Inactive</span>'?></td>
       <td><div class="flex gap-1">
         <a href="index.php?p=discounts&action=edit&id=<?=$d['id']?>" class="btn btn-ghost btn-sm">Edit</a>
-        <a href="index.php?p=discounts&action=toggle&id=<?=$d['id']?>" class="btn btn-ghost btn-sm"><?=($d['active']??0)?'Disable':'Enable'?></a>
-        <a href="index.php?p=discounts&action=delete&id=<?=$d['id']?>" class="btn btn-danger btn-sm" data-confirm="Delete '<?=e($d['name'])?>'?">Delete</a>
+        <a href="<?=csrfUrl('index.php?p=discounts&action=toggle&id='.$d['id'])?>" class="btn btn-ghost btn-sm"><?=($d['active']??0)?'Disable':'Enable'?></a>
+        <a href="<?=csrfUrl('index.php?p=discounts&action=delete&id='.$d['id'])?>" class="btn btn-danger btn-sm" data-confirm="Delete '<?=e($d['name'])?>'?">Delete</a>
       </div></td>
     </tr>
     <?php endforeach;?>

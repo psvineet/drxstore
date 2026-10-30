@@ -1,0 +1,108 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# DRXStore — Nginx Configuration Example
+# SECURITY FIX: L4/L5 — Block direct access to sensitive directories
+#
+# This file is a REFERENCE ONLY. Copy/adapt the relevant blocks into your
+# actual nginx server block. The .htaccess file in this project only works
+# on Apache; nginx ignores it entirely.
+#
+# Usage (typical shared-hosting / cPanel nginx passthrough):
+#   Include this in your server {} block, e.g.:
+#     include /home/user/public_html/nginx.conf.example;
+#
+# Usage (VPS / dedicated):
+#   Copy the relevant location blocks into your site config at
+#   /etc/nginx/sites-available/drxstore.conf  (or wherever your config lives)
+# ══════════════════════════════════════════════════════════════════════════════
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name yourdomain.com www.yourdomain.com;
+
+    # ── Force HTTPS (L7) ──────────────────────────────────────────────────────
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name yourdomain.com www.yourdomain.com;
+
+    root /var/www/drxstore;   # ← Change to your actual web root
+    index index.php;
+
+    # ── TLS (obtain cert with: certbot --nginx -d yourdomain.com) ─────────────
+    ssl_certificate     /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+
+    # ── HTTP security headers (L7) ────────────────────────────────────────────
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';" always;
+    more_clear_headers "X-Powered-By";   # requires ngx_headers_more; if not available, remove this line
+
+    # ── SECURITY (L4/L5): Block direct access to sensitive directories ─────────
+    # These directories contain PHP source, DB files, config, and uploads.
+    # Apache's .htaccess blocks these; nginx requires explicit location blocks.
+
+    # Block access to the data/ directory (JSON DB, config, backups, uploads)
+    location ^~ /data/ {
+        deny all;
+        return 403;
+    }
+
+    # Block access to internal PHP source directories
+    location ~* ^/(config|helpers|views)/ {
+        deny all;
+        return 403;
+    }
+
+    # Block access to sensitive file extensions
+    location ~* \.(json|sql|log|tmp|bak|sh|env)$ {
+        deny all;
+        return 403;
+    }
+
+    # Block access to hidden files (e.g. .setup_token, .htaccess, .env)
+    location ~ /\. {
+        deny all;
+        return 403;
+    }
+
+    # ── PHP-FPM ───────────────────────────────────────────────────────────────
+    location ~ \.php$ {
+        try_files $uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;  # ← Adjust PHP version
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+
+        # Set TRUSTED_PROXIES here if you have a load balancer / CDN (L3)
+        # fastcgi_param TRUSTED_PROXIES "10.0.0.1,10.0.0.2";
+        # (Then also define TRUSTED_PROXIES as a PHP constant in config/app.php)
+    }
+
+    # ── Static files ──────────────────────────────────────────────────────────
+    location ~* \.(css|js|jpg|jpeg|png|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
+        access_log off;
+    }
+
+    # ── All requests through index.php ────────────────────────────────────────
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # ── Logging ───────────────────────────────────────────────────────────────
+    access_log /var/log/nginx/drxstore_access.log;
+    error_log  /var/log/nginx/drxstore_error.log;
+}

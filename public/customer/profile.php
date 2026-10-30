@@ -13,8 +13,11 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     }
     if($act==='password'){
         $old=post('old_pw'); $new=post('new_pw'); $conf=post('conf_pw');
+        // SECURITY (L2): Minimum 8 chars + digit or special char
+        $minLen=defined('MIN_PASSWORD_LENGTH')?MIN_PASSWORD_LENGTH:8;
         if(!password_verify($old,$cust['password']??''))$errors[]='Current password incorrect.';
-        elseif(strlen($new)<6)$errors[]='Min 6 characters.';
+        elseif(strlen($new)<$minLen)$errors[]='Password must be at least '.$minLen.' characters.';
+        elseif(!preg_match('/[0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/',$new))$errors[]='Password must contain at least one number or special character.';
         elseif($new!==$conf)$errors[]='Passwords do not match.';
         if(empty($errors)){$db->update('customers',fn($c)=>$c['id']===$cid,['password'=>password_hash($new,PASSWORD_BCRYPT)]);setFlash('success','Password changed.');header('Location: index.php?p=cust_profile');exit;}
     }
@@ -38,7 +41,7 @@ portalHeader('My Profile','customer','cust_profile',$navItems,['name'=>'customer
   <div class="card"><div class="card-hdr"><div class="card-title">Change Password</div></div><div class="card-body">
     <form method="POST"><?=csrfField()?><input type="hidden" name="action" value="password">
       <div class="form-group"><label class="form-label">Current Password</label><input class="form-control" type="password" name="old_pw" required></div>
-      <div class="form-group"><label class="form-label">New Password</label><input class="form-control" type="password" name="new_pw" required placeholder="Min 6 characters"></div>
+      <div class="form-group"><label class="form-label">New Password</label><input class="form-control" type="password" name="new_pw" required placeholder="Min 8 chars, include number/symbol"></div>
       <div class="form-group"><label class="form-label">Confirm</label><input class="form-control" type="password" name="conf_pw" required></div>
       <button type="submit" class="btn btn-primary">Change Password</button>
     </form>

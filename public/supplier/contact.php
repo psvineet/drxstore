@@ -19,11 +19,18 @@ $errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verifyCsrf();
+    // SECURITY (L8): Rate-limit supplier contact form to prevent email flooding.
+    // Uses the same lockout mechanism as the login/resend-verify forms.
+    $rlCtx = 'sup_contact_' . ($sid ?: clientIp());
+    if (isLockedOut($rlCtx)) {
+        $errors[] = 'Too many messages sent. Please wait ' . LOCKOUT_MIN . ' minutes before trying again.';
+    } else {
     $subject = post('subject');
     $message = post('message');
     if (!$subject) $errors[] = 'Subject required.';
     if (!$message) $errors[] = 'Message required.';
     if (empty($errors)) {
+        recordAttempt($rlCtx); // count only successful sends toward the limit
         $db->insert('supplier_messages', [
             'supplier_id'   => $supId,
             'supplier_name' => $sup['name'] ?? '',
@@ -47,6 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         sendMail($storeEmail, '[Supplier Inquiry] ' . e($subject) . ' — ' . e($sup['name'] ?? ''), $body);
         $sent = true;
     }
+    } // end rate-limit else
 }
 
 // Load all messages for this supplier (both sent by supplier and replied by store)

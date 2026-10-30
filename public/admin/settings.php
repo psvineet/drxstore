@@ -35,9 +35,17 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         foreach(['store_name','store_address','store_phone','store_email','store_gst','store_dl','currency','low_qty','expiry_days','storage','setup_done'] as $f) {
             if(isset($cfg[$f])) $data[$f]=$cfg[$f];
         }
-        $newpass=post('smtp_pass');
-        if($newpass) $data['smtp_pass']=$newpass;
-        else if(isset($cfg['smtp_pass'])) $data['smtp_pass']=$cfg['smtp_pass'];
+        // SECURITY (M1): Encrypt SMTP password at rest using AES-256-GCM.
+        // The key lives in SMTP_KEY (config/app.php), never in the database.
+        $newpass = post('smtp_pass');
+        if ($newpass) {
+            $iv = random_bytes(12);
+            $tag = '';
+            $enc = openssl_encrypt($newpass, 'aes-256-gcm', SMTP_KEY, OPENSSL_RAW_DATA, $iv, $tag, '', 16);
+            $data['smtp_pass'] = 'ENC:' . base64_encode($iv . $tag . $enc);
+        } elseif (isset($cfg['smtp_pass'])) {
+            $data['smtp_pass'] = $cfg['smtp_pass']; // keep existing (already encrypted or legacy)
+        }
         if($db->count('settings')>0){
             $db->update('settings',fn($x)=>true,$data);
         } else {
@@ -51,7 +59,17 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         $to=post('test_email');
         if(!filter_var($to,FILTER_VALIDATE_EMAIL)){$errors[]='Enter a valid email to test.';}
         else{
-            $smtpCfg=['host'=>$cfg['smtp_host']??'','port'=>(int)($cfg['smtp_port']??587),'user'=>$cfg['smtp_user']??'','pass'=>$cfg['smtp_pass']??'','from'=>$cfg['smtp_from']??storeEmail(),'name'=>$cfg['smtp_name']??storeName(),'secure'=>$cfg['smtp_secure']??'tls'];
+            // SECURITY (M1): Decrypt SMTP password for use in test (not stored decrypted)
+            $rawPass = $cfg['smtp_pass'] ?? '';
+            if (str_starts_with($rawPass, 'ENC:')) {
+                $blob = base64_decode(substr($rawPass, 4));
+                $iv   = substr($blob, 0, 12);
+                $tag  = substr($blob, 12, 16);
+                $enc  = substr($blob, 28);
+                $dec  = openssl_decrypt($enc, 'aes-256-gcm', SMTP_KEY, OPENSSL_RAW_DATA, $iv, $tag);
+                $rawPass = $dec !== false ? $dec : '';
+            }
+            $smtpCfg=['host'=>$cfg['smtp_host']??'','port'=>(int)($cfg['smtp_port']??587),'user'=>$cfg['smtp_user']??'','pass'=>$rawPass,'from'=>$cfg['smtp_from']??storeEmail(),'name'=>$cfg['smtp_name']??storeName(),'secure'=>$cfg['smtp_secure']??'tls'];
             $result=Mailer::test($to,$smtpCfg);
             if($result['success'])setFlash('success',$result['message']);
             else setFlash('danger','SMTP Test: '.$result['message']);
@@ -62,8 +80,11 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     if($act==='password'){
         $old=post('old_pw');$new=post('new_pw');$conf=post('conf_pw');
         $u=$db->findOne('users',fn($u)=>$u['id']===$_SESSION['admin_id']);
+        $minLen = defined('MIN_PASSWORD_LENGTH') ? MIN_PASSWORD_LENGTH : 8;
         if(!password_verify($old,$u['password']??''))$errors[]='Current password incorrect.';
-        elseif(strlen($new)<6)$errors[]='Min 6 characters.';
+        // SECURITY (L2): Minimum password length raised to 8; require at least one digit or special char
+        elseif(strlen($new)<$minLen)$errors[]='Password must be at least '.$minLen.' characters.';
+        elseif(!preg_match('/[0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/',$new))$errors[]='Password must contain at least one number or special character.';
         elseif($new!==$conf)$errors[]='Passwords do not match.';
         else{$db->update('users',fn($u)=>$u['id']===$_SESSION['admin_id'],['password'=>password_hash($new,PASSWORD_BCRYPT)]);setFlash('success','Password changed.');header('Location: index.php?p=settings');exit;}
     }
@@ -268,6 +289,14 @@ if(get('action')==='backup_mysql'){
 // ── MySQL Restore ────────────────────────────────────────────────
 if($_SERVER['REQUEST_METHOD']==='POST' && post('action')==='restore_mysql'){
     verifyCsrf();
+    // SECURITY (M2): Require admin password re-confirmation before executing SQL restore.
+    // This prevents a stolen session or CSRF (GET-based) from wiping the database.
+    $confirmPw = post('confirm_password');
+    $currentAdmin = $db->findOne('users', fn($u) => $u['id'] === ($_SESSION['admin_id'] ?? 0));
+    if (!$currentAdmin || !password_verify($confirmPw, $currentAdmin['password'] ?? '')) {
+        setFlash('danger', 'Restore cancelled: admin password confirmation failed.');
+        header('Location: index.php?p=settings'); exit;
+    }
     $dbCfgFile = DATA_DIR.'/db_config.json';
     if(!file_exists($dbCfgFile)||($cfg['storage']??'json')!=='mysql'){
         setFlash('danger','Restore is only available for MySQL storage.');
@@ -548,7 +577,7 @@ adminHeader('Settings','settings');
       <form method="POST"><?=csrfField()?><input type="hidden" name="action" value="password">
         <div class="form-group"><label class="form-label">Current Password</label><input class="form-control" type="password" name="old_pw" required></div>
         <div class="form-row-2">
-          <div class="form-group"><label class="form-label">New Password</label><input class="form-control" type="password" name="new_pw" required placeholder="Min 6 characters"></div>
+          <div class="form-group"><label class="form-label">New Password</label><input class="form-control" type="password" name="new_pw" required placeholder="Min 8 chars, include number/symbol"></div>
           <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-control" type="password" name="conf_pw" required></div>
         </div>
         <button type="submit" class="btn btn-primary">Change Password</button>
@@ -674,6 +703,11 @@ adminHeader('Settings','settings');
           <div class="form-group"><label class="form-label">Upload .sql File</label>
             <input class="form-control" type="file" name="sql_file" accept=".sql" required>
             <div class="form-hint">Accepts DRXStore backups or phpMyAdmin exports.</div>
+          </div>
+          <!-- SECURITY (M2): Admin must re-enter their password to execute restore -->
+          <div class="form-group"><label class="form-label">Confirm Your Admin Password <span class="req">*</span></label>
+            <input class="form-control" type="password" name="confirm_password" required autocomplete="current-password" placeholder="Enter your current admin password">
+            <div class="form-hint">Required to prevent unauthorized database overwrites.</div>
           </div>
           <button type="submit" class="btn btn-danger" onclick="return confirm('This will OVERWRITE all current data.\n\nAre you absolutely sure?')">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>

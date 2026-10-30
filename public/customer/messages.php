@@ -33,21 +33,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (($hasFile || $normalUpload) && empty($errors)) {
         $allowed = ['jpg','jpeg','png','pdf','heic','webp'];
 
+        // SECURITY (H1): Allowed MIME types mapped to extensions.
+        // Extension check alone is insufficient — verify actual file content via finfo.
+        $allowedMimes = [
+            'image/jpeg'      => ['jpg','jpeg'],
+            'image/png'       => ['png'],
+            'image/webp'      => ['webp'],
+            'image/heic'      => ['heic'],
+            'image/heif'      => ['heic'],
+            'application/pdf' => ['pdf'],
+        ];
+
+        /**
+         * Validates decoded file bytes against MIME type and extension whitelist.
+         * Returns error string on failure, or '' on success.
+         */
+        $validateFileBytes = function(string $bytes, string $ext) use ($allowedMimes): string {
+            // Check extension is in any allowed MIME group
+            $extAllowed = false;
+            foreach ($allowedMimes as $exts) {
+                if (in_array($ext, $exts, true)) { $extAllowed = true; break; }
+            }
+            if (!$extAllowed) return 'Only JPG, PNG, PDF, WEBP files allowed.';
+
+            // Detect actual MIME from bytes using finfo
+            if (function_exists('finfo_open')) {
+                $fi   = finfo_open(FILEINFO_MIME_TYPE);
+                $mime = finfo_buffer($fi, $bytes);
+                finfo_close($fi);
+                if (!isset($allowedMimes[$mime])) {
+                    return 'File type not permitted. Detected: ' . htmlspecialchars($mime) . '.';
+                }
+                // Also confirm extension matches the detected MIME
+                if (!in_array($ext, $allowedMimes[$mime], true)) {
+                    return 'File extension does not match file content.';
+                }
+            }
+            return '';
+        };
+
         if ($hasFile) {
             // Base64 path — file was read into memory by JS, safe from ERR_UPLOAD_FILE_CHANGED
             $ext = strtolower(pathinfo($b64name, PATHINFO_EXTENSION));
-            if (!in_array($ext, $allowed)) {
-                $errors[] = 'Only JPG, PNG, PDF files allowed.';
+            // Strip data URI prefix if present (data:image/jpeg;base64,...)
+            $raw     = preg_replace('/^data:[^;]+;base64,/', '', $b64data);
+            $decoded = base64_decode($raw, true);
+            if (!$decoded) {
+                $errors[] = 'File data is corrupt. Please try again.';
+            } elseif (strlen($decoded) > 10 * 1024 * 1024) {
+                $errors[] = 'File too large. Max 10 MB.';
             } else {
-                // Strip data URI prefix if present (data:image/jpeg;base64,...)
-                $raw = preg_replace('/^data:[^;]+;base64,/', '', $b64data);
-                $decoded = base64_decode($raw, true);
-                if (!$decoded) {
-                    $errors[] = 'File data is corrupt. Please try again.';
-                } elseif (strlen($decoded) > 10 * 1024 * 1024) {
-                    $errors[] = 'File too large. Max 10 MB.';
+                $mimeErr = $validateFileBytes($decoded, $ext);
+                if ($mimeErr) {
+                    $errors[] = $mimeErr;
                 } else {
-                    $newName  = 'rx_' . $cid . '_' . time() . '.' . $ext;
+                    // SECURITY (M5): Use cryptographically random filename to prevent enumeration
+                    $newName  = 'rx_' . bin2hex(random_bytes(16)) . '.' . $ext;
                     $destPath = $uploadDir . $newName;
                     if (file_put_contents($destPath, $decoded) !== false) {
                         $filePath = $newName;
@@ -62,19 +103,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Normal upload fallback
             $file = $_FILES['prescription'];
             $ext  = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-            if (!in_array($ext, $allowed)) {
-                $errors[] = 'Only JPG, PNG, PDF files allowed.';
-            } elseif ($file['size'] > 10 * 1024 * 1024) {
+            if ($file['size'] > 10 * 1024 * 1024) {
                 $errors[] = 'File too large. Max 10 MB.';
             } else {
-                $newName  = 'rx_' . $cid . '_' . time() . '.' . $ext;
-                $destPath = $uploadDir . $newName;
-                if (move_uploaded_file($file['tmp_name'], $destPath)) {
-                    $filePath = $newName;
-                    $fileName = $file['name'];
-                    $fileType = $ext;
+                $fileBytes = file_get_contents($file['tmp_name']);
+                $mimeErr   = $validateFileBytes($fileBytes, $ext);
+                if ($mimeErr) {
+                    $errors[] = $mimeErr;
                 } else {
-                    $errors[] = 'File upload failed. Check server permissions.';
+                    // SECURITY (M5): Use cryptographically random filename
+                    $newName  = 'rx_' . bin2hex(random_bytes(16)) . '.' . $ext;
+                    $destPath = $uploadDir . $newName;
+                    if (move_uploaded_file($file['tmp_name'], $destPath)) {
+                        $filePath = $newName;
+                        $fileName = $file['name'];
+                        $fileType = $ext;
+                    } else {
+                        $errors[] = 'File upload failed. Check server permissions.';
+                    }
                 }
             }
         }

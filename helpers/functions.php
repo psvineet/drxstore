@@ -118,12 +118,56 @@ function verifyCsrf(): void   {
     }
 }
 
+/**
+ * SECURITY (M4): Verify CSRF token passed as a GET query parameter.
+ * Used for destructive GET-based actions (delete, toggle) to prevent CSRF.
+ * Links must include ?_token=<?=csrfToken()?> in the URL.
+ */
+function verifyCsrfGet(): void {
+    startSession();
+    $token = $_GET['_token'] ?? '';
+    if (!hash_equals($_SESSION['csrf'] ?? '', $token)) {
+        http_response_code(403); die('Invalid security token. Please go back and try again.');
+    }
+}
+
+/**
+ * Build a CSRF-protected action URL for GET-based admin actions.
+ * Usage: csrfUrl('index.php?p=batches&action=delete&id=' . $id)
+ */
+function csrfUrl(string $url): string {
+    $token = csrfToken();
+    $sep   = str_contains($url, '?') ? '&' : '?';
+    return $url . $sep . '_token=' . urlencode($token);
+}
+
 /* ── Brute force ── */
 function clientIp(): string {
-    foreach (['HTTP_CLIENT_IP','HTTP_X_FORWARDED_FOR','REMOTE_ADDR'] as $k) {
-        $v = $_SERVER[$k] ?? '';
-        if ($v && filter_var(explode(',', $v)[0], FILTER_VALIDATE_IP)) return trim(explode(',', $v)[0]);
+    // SECURITY (L3): Only trust X-Forwarded-For / HTTP_CLIENT_IP headers when the
+    // direct connection (REMOTE_ADDR) comes from a known, trusted reverse proxy.
+    // Accepting these headers unconditionally lets any client spoof their IP and
+    // bypass rate-limiting / audit logs.
+    //
+    // List your reverse proxy IPs here (e.g. Nginx on localhost, Cloudflare ranges).
+    // When empty, X-Forwarded-For is NEVER trusted and REMOTE_ADDR is always used.
+    $trustedProxies = defined('TRUSTED_PROXIES') ? TRUSTED_PROXIES : ['127.0.0.1', '::1'];
+
+    $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $isTrustedProxy = in_array($remoteAddr, $trustedProxies, true);
+
+    if ($isTrustedProxy) {
+        // Only read the first (leftmost) IP from X-Forwarded-For — it is the client's
+        foreach (['HTTP_CLIENT_IP', 'HTTP_X_FORWARDED_FOR'] as $k) {
+            $v = $_SERVER[$k] ?? '';
+            $ip = trim(explode(',', $v)[0]);
+            if ($ip && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return $ip;
+            }
+        }
     }
+
+    // Fall back to the direct connection IP (safe, not spoofable)
+    if (filter_var($remoteAddr, FILTER_VALIDATE_IP)) return $remoteAddr;
     return '0.0.0.0';
 }
 function isLockedOut(string $context): bool {
@@ -177,7 +221,13 @@ function startSession(): void {
 
 function requireAdmin(): void {
     startSession();
-    if (empty($_SESSION['admin_id'])) { header('Location: index.php?p=login'); exit; }
+    if (
+        empty($_SESSION['admin_id']) ||
+        ($_SESSION['admin_role'] ?? '') !== 'admin'
+    ) {
+        header('Location: index.php?p=login');
+        exit;
+    }
 }
 
 function requireStaff(): void {

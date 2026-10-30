@@ -1,13 +1,46 @@
 Options -Indexes
 DirectoryIndex index.php
 
-# Block direct access to sensitive files
+# ── SECURITY: HTTPS enforcement (L7) ──────────────────────────────────────
+# Redirect all HTTP traffic to HTTPS. Remove this block if your server handles
+# TLS termination upstream (e.g. load balancer, Cloudflare in Full mode).
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTPS} off
+    RewriteCond %{HTTP_HOST} !^localhost [NC]
+    RewriteCond %{HTTP_HOST} !^127\.0\.0\. [NC]
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</IfModule>
+
+# ── SECURITY: HTTP security headers (L7) ──────────────────────────────────
+<IfModule mod_headers.c>
+    # Tell browsers to always use HTTPS for 1 year (HSTS)
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" env=HTTPS
+
+    # Prevent clickjacking
+    Header always set X-Frame-Options "SAMEORIGIN"
+
+    # Prevent MIME-type sniffing
+    Header always set X-Content-Type-Options "nosniff"
+
+    # Referrer policy — don't leak full URL to third parties
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Basic Content Security Policy — tighten further as needed
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';"
+
+    # Remove server version information
+    Header unset X-Powered-By
+    Header always unset X-Powered-By
+</IfModule>
+
+# ── Block direct access to sensitive files ─────────────────────────────────
 <FilesMatch "\.(json|sql|log|tmp|bak|sh)$">
     Order allow,deny
     Deny from all
 </FilesMatch>
 
-# Block direct access to config/helpers/views/data directories
+# ── Block direct access to config/helpers/views/data directories ───────────
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteBase /

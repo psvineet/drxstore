@@ -8,6 +8,17 @@
 // Buffer ALL output - prevents "headers already sent" from any warning/notice
 ob_start();
 
+// SECURITY (L4/L5): Block direct HTTP requests that resolve to sensitive directories.
+// .htaccess handles this on Apache, but nginx ignores .htaccess. This PHP-level check
+// ensures protection on any web server. Legitimate requests never target data/ directly.
+(function() {
+    $uri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+    if ($uri && preg_match('#/(data|config|helpers|views)(/|$)#i', $uri)) {
+        http_response_code(403);
+        exit('403 Forbidden');
+    }
+})();
+
 // Define ROOT once here - config/app.php guards against re-definition
 if (!defined('ROOT')) define('ROOT', __DIR__);
 
@@ -63,6 +74,7 @@ $routes = [
     // Admin
     'dashboard'   => 'admin/dashboard',
     'medicines'   => 'admin/medicines',
+    'import_med'  => 'admin/import_medicines',
     'batches'     => 'admin/batches',
     'adjust'      => 'admin/adjust_stock',
     'suppliers'   => 'admin/suppliers',

@@ -1,7 +1,7 @@
 <?php
 /**
  * DRXStore v4 - Portal Layout (Supplier + Customer)
- * Developed by Vineet | psvineet@zohomail.in
+ * Developed by Vineet | ci.vps@proton.me
  */
 function _portalNavIcon(string $name): string {
     $icons = [

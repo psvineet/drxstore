@@ -8,8 +8,11 @@ $errors=[];
 if($_SERVER['REQUEST_METHOD']==='POST'){
     verifyCsrf(); $newpw=post('new_password'); $conf=post('confirm');
     $old=post('old_password');
+    // SECURITY (L2): Minimum 8 chars + digit or special char
+    $minLen=defined('MIN_PASSWORD_LENGTH')?MIN_PASSWORD_LENGTH:8;
     if(!password_verify($old,$su['password']??''))$errors[]='Current password incorrect.';
-    elseif(strlen($newpw)<6)$errors[]='Min 6 characters.';
+    elseif(strlen($newpw)<$minLen)$errors[]='Password must be at least '.$minLen.' characters.';
+    elseif(!preg_match('/[0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/',$newpw))$errors[]='Password must contain at least one number or special character.';
     elseif($newpw!==$conf)$errors[]='Passwords do not match.';
     if(empty($errors)){$db->update('supplier_users',fn($u)=>$u['id']===$sid,['password'=>password_hash($newpw,PASSWORD_BCRYPT)]);setFlash('success','Password changed successfully.');header('Location: index.php?p=sup_profile');exit;}
 }
@@ -27,7 +30,7 @@ portalHeader('My Profile','supplier','sup_profile',$navItems,['name'=>'supplier_
   <div class="card"><div class="card-hdr"><div class="card-title">Change Password</div></div><div class="card-body">
     <form method="POST"><?=csrfField()?>
       <div class="form-group"><label class="form-label">Current Password</label><input class="form-control" type="password" name="old_password" required></div>
-      <div class="form-group"><label class="form-label">New Password</label><input class="form-control" type="password" name="new_password" required placeholder="Min 6 characters"></div>
+      <div class="form-group"><label class="form-label">New Password</label><input class="form-control" type="password" name="new_password" required placeholder="Min 8 chars, include number/symbol"></div>
       <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-control" type="password" name="confirm" required></div>
       <button type="submit" class="btn btn-primary">Change Password</button>
     </form>

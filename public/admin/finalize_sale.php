@@ -49,15 +49,20 @@ $discAmt = (float)post('discount_amt', 0);
 $discId  = postInt('discount_id') ?: null;
 // Also handle custom percentage discount
 $discPct = (float)post('discount_pct', 0);
-if ($discPct > 0 && !$discId) {
-    // Apply discount on inclusive total (what the customer actually pays)
-    $discAmt = round($inclTotal * ($discPct / 100), 2);
-}
 // grand_total = sum of all inclusive prices - discount
 // (sub + gstAmt = sum of all inclusive prices, same as summing item['price'])
 $inclTotal = 0; foreach ($cart as $ci) $inclTotal += (float)$ci['price'];
 $inclTotal = round($inclTotal, 2);
-$grand     = max(0, round($inclTotal - $discAmt, 2));
+if ($discPct > 0 && !$discId) {
+    // Apply discount on inclusive total (what the customer actually pays)
+    $discAmt = round($inclTotal * ($discPct / 100), 2);
+}
+// SECURITY (L1): Cap discount to the actual cart total. A discount cannot exceed
+// 100% of the cart value — this prevents staff from setting arbitrary discounts
+// that result in zero or negative sale totals.
+$discAmt = max(0, min($discAmt, $inclTotal));
+$discPct = $inclTotal > 0 ? round(($discAmt / $inclTotal) * 100, 2) : 0;
+$grand   = max(0, round($inclTotal - $discAmt, 2));
 
 $custId    = $_SESSION['cart_cust'] ?? null;
 $pmeth     = post('payment_method', $cart[0]['payment_method'] ?? 'cash');

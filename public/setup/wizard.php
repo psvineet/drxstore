@@ -8,7 +8,50 @@ if (!defined('ROOT')) define('ROOT', dirname(dirname(dirname(__FILE__))));
 require_once ROOT . '/config/app.php';
 startSession();
 
+// SECURITY (M3): Two-layer wizard gate.
+// Layer 1: if setup is already complete, redirect to login.
 if ($db->count('settings') > 0) { header('Location: index.php?p=login'); exit; }
+// Layer 2: one-time setup token stored in a file outside the web root.
+// The token is created on first load and consumed once setup finishes.
+// Without this token anyone who reaches the URL can re-run setup on an
+// empty (or newly wiped) database.
+$_setupTokenFile = DATA_DIR . '/.setup_token';
+$_isFirstVisit = false;
+if (!file_exists($_setupTokenFile)) {
+    // First visit: generate and store the token; redirect to URL with token.
+    $setupToken = bin2hex(random_bytes(24));
+    file_put_contents($_setupTokenFile, $setupToken, LOCK_EX);
+    $_isFirstVisit = true;
+}
+$_storedToken = trim(file_get_contents($_setupTokenFile));
+$_givenToken  = $_GET['token'] ?? ($_SESSION['setup_token'] ?? '');
+
+// On very first visit (token just generated), log the setup URL and auto-redirect.
+if ($_isFirstVisit) {
+    $_proto   = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $_base    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+    $_setupUrl = $_proto . '://' . $_SERVER['HTTP_HOST'] . $_base . '?p=setup&token=' . urlencode($_storedToken);
+    error_log('[DRXStore] First-time setup URL (one-time): ' . $_setupUrl);
+    header('Location: ' . $_setupUrl);
+    exit;
+}
+
+if (!hash_equals($_storedToken, (string)$_givenToken)) {
+    http_response_code(403);
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>403 Forbidden — DRXStore</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f8fafc;display:flex;
+    align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px}
+    .box{background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.10);padding:36px 40px;max-width:520px;width:100%}
+    h2{margin:0 0 12px;color:#dc2626}p{color:#374151;line-height:1.6;font-size:.9rem;margin:0}
+    </style></head><body><div class="box">
+    <h2>&#128274; 403 Forbidden</h2>
+    <p>Setup is not accessible. If you are the server administrator, retrieve the setup URL from your server logs.</p>
+    </div></body></html>';
+    exit;
+}
+// Token accepted — store in session so multi-step POSTs don't need it in the URL
+$_SESSION['setup_token'] = $_storedToken;
 
 // AJAX MySQL connection test
 if ($_SERVER['REQUEST_METHOD']==='POST' && post('action') === 'test_mysql') {
@@ -34,7 +77,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
         if (!$fn) $errors[]='Full name required.';
         if (!$un) $errors[]='Username required.';
         if (!filter_var($em,FILTER_VALIDATE_EMAIL)) $errors[]='Valid email required.';
-        if (strlen($pw)<6) $errors[]='Password must be at least 6 characters.';
+        // SECURITY (L2): Enforce minimum 8 characters + at least one digit or special char
+        $minLen = defined('MIN_PASSWORD_LENGTH') ? MIN_PASSWORD_LENGTH : 8;
+        if (strlen($pw)<$minLen) $errors[]='Password must be at least '.$minLen.' characters.';
+        elseif(!preg_match('/[0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/',$pw)) $errors[]='Password must contain at least one number or special character.';
         if ($pw!==$cn) $errors[]='Passwords do not match.';
         if (empty($errors)) { $_SESSION['setup']['admin']=compact('fn','un','em','pw'); $step=3; }
     } elseif ($step===3) {
@@ -67,6 +113,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
             $db->insert('settings',['store_name'=>$s['store_name']??APP_NAME,'store_address'=>$s['store_addr']??'','store_phone'=>$s['store_phone']??'','store_email'=>$s['store_email']??'','store_gst'=>$s['store_gst']??'','store_dl'=>$s['store_dl']??'','currency'=>$s['currency']??'&#8377;','storage'=>$s['driver']??'json','setup_done'=>1,'created_at'=>date('Y-m-d H:i:s')]);
             $db->insert('users',['name'=>$a['fn'],'username'=>$a['un'],'email'=>$a['em'],'password'=>password_hash($a['pw'],PASSWORD_BCRYPT),'role'=>'admin','active'=>1,'created_at'=>date('Y-m-d H:i:s')]);
             unset($_SESSION['setup']);
+            unset($_SESSION['setup_token']);
+            // SECURITY (M3): Delete the one-time setup token so it cannot be reused.
+            @unlink($_setupTokenFile);
             // Self-delete setup folder
             @unlink(__FILE__);
             @rmdir(dirname(__FILE__));
@@ -127,7 +176,7 @@ $currency_sym = $s['currency'] ?? '&#8377;';
       </div>
       <div class="form-group"><label class="form-label">Email <span class="req">*</span></label><input class="form-control" type="email" name="email" value="<?=e($s['admin']['em']??'')?>" required></div>
       <div class="form-row-2">
-        <div class="form-group"><label class="form-label">Password <span class="req">*</span></label><input class="form-control" type="password" name="password" required placeholder="Min 6 characters"></div>
+        <div class="form-group"><label class="form-label">Password <span class="req">*</span></label><input class="form-control" type="password" name="password" required placeholder="Min 8 chars, include number/symbol"></div>
         <div class="form-group"><label class="form-label">Confirm Password <span class="req">*</span></label><input class="form-control" type="password" name="confirm" required></div>
       </div>
 

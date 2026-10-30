@@ -7,7 +7,7 @@
 if (!defined('APP_NAME'))    define('APP_NAME',    'DRXStore');
 if (!defined('APP_VERSION')) define('APP_VERSION', '2.0.0');
 if (!defined('APP_AUTHOR'))  define('APP_AUTHOR',  'Vineet');
-if (!defined('ADMIN_EMAIL')) define('ADMIN_EMAIL', 'psvineet@zohomail.in');
+if (!defined('ADMIN_EMAIL')) define('ADMIN_EMAIL', 'ci.vps@proton.me');
 
 if (!defined('ROOT'))     define('ROOT',     dirname(__DIR__));
 if (!defined('DATA_DIR')) define('DATA_DIR', ROOT . '/data');
@@ -16,9 +16,16 @@ if (!defined('GST_RATE'))      define('GST_RATE',      0.18);
 if (!defined('LOW_QTY'))       define('LOW_QTY',       10);
 if (!defined('EXPIRY_DAYS'))   define('EXPIRY_DAYS',   90);
 if (!defined('PER_PAGE'))      define('PER_PAGE',      25);
-if (!defined('MAX_ATTEMPTS'))  define('MAX_ATTEMPTS',  5);
-if (!defined('LOCKOUT_MIN'))   define('LOCKOUT_MIN',   15);
-if (!defined('SESSION_TTL'))   define('SESSION_TTL',   7200);
+if (!defined('MAX_ATTEMPTS'))       define('MAX_ATTEMPTS',       5);
+if (!defined('LOCKOUT_MIN'))        define('LOCKOUT_MIN',        15);
+if (!defined('SESSION_TTL'))        define('SESSION_TTL',        7200);
+if (!defined('MIN_PASSWORD_LENGTH')) define('MIN_PASSWORD_LENGTH', 8);
+
+// ── SECURITY (M1): SMTP password encryption key ────────────────────────────
+// Override this with a unique random string in your environment config.
+// Generate one with: php -r "echo base64_encode(random_bytes(32));"
+// Never commit the real key to version control.
+if (!defined('SMTP_KEY')) define('SMTP_KEY', 'CHANGE_ME_BEFORE_DEPLOY_' . sha1(__FILE__));
 
 if (!defined('DOSAGE_FORMS')) define('DOSAGE_FORMS', [
     'Tablet','Capsule','Syrup','Suspension','Injection','Infusion',
@@ -31,7 +38,7 @@ if (!defined('STAFF_ALLOWED_PAGES')) define('STAFF_ALLOWED_PAGES', [
     'customers','invoice','view_inv','cart_add','cart_remove',
     'cart_clear','cart_setcust','finalize','get_batches',
     'expiry','returns','patient_messages','cust_messages',
-    'purchase','view_po',
+    'purchase','view_po','import_med',
 ]);
 
 ini_set('display_errors', 0);   // Never expose raw errors to browser

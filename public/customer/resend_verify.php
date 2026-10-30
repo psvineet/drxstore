@@ -9,9 +9,17 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     verifyCsrf();
     $email=trim(post('email'));
     $submitted=true;
-    if(!$email||!filter_var($email,FILTER_VALIDATE_EMAIL)){
+    // SECURITY (H2): Rate-limit resend requests to prevent email bombing.
+    // Uses the same lockout mechanism as the login page, keyed by 'resend_verify'.
+    $rlCtx = 'resend_verify';
+    if(isLockedOut($rlCtx)){
+        $msg='Too many attempts. Please wait ' . LOCKOUT_MIN . ' minutes before trying again.';
+        $msgType='danger';
+    } elseif(!$email||!filter_var($email,FILTER_VALIDATE_EMAIL)){
+        recordAttempt($rlCtx);
         $msg='Please enter a valid email address.'; $msgType='danger';
     } else {
+        recordAttempt($rlCtx); // count every send attempt regardless of whether email exists
         $cust=$db->findOne('customers',fn($c)=>strtolower($c['email']??'')===strtolower($email));
         if($cust&&empty($cust['verified'])){
             $tok=bin2hex(random_bytes(32));

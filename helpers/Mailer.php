@@ -14,11 +14,24 @@ class Mailer {
 
     public static function fromSettings(): self {
         $cfg = getSettings();
+        // SECURITY (M1): Decrypt SMTP password stored encrypted in the database.
+        // Passwords saved after the M1 patch are prefixed with "ENC:".
+        // Legacy plaintext passwords (pre-patch) are used as-is and re-encrypted on next save.
+        $rawPass = $cfg['smtp_pass'] ?? '';
+        if (str_starts_with($rawPass, 'ENC:')) {
+            $blob    = base64_decode(substr($rawPass, 4));
+            $iv      = substr($blob, 0, 12);
+            $tag     = substr($blob, 12, 16);
+            $enc     = substr($blob, 28);
+            $key     = defined('SMTP_KEY') ? SMTP_KEY : '';
+            $decoded = openssl_decrypt($enc, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+            $rawPass = $decoded !== false ? $decoded : '';
+        }
         return new self([
             'host'     => $cfg['smtp_host']   ?? '',
             'port'     => (int)($cfg['smtp_port']   ?? 587),
             'user'     => $cfg['smtp_user']   ?? '',
-            'pass'     => $cfg['smtp_pass']   ?? '',
+            'pass'     => $rawPass,
             'from'     => $cfg['smtp_from']   ?? ($cfg['store_email'] ?? ADMIN_EMAIL),
             'name'     => $cfg['smtp_name']   ?? ($cfg['store_name']  ?? APP_NAME),
             'secure'   => $cfg['smtp_secure'] ?? 'tls', // tls or ssl

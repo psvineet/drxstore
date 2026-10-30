@@ -1,7 +1,7 @@
 <?php
 if (!defined('ROOT')) define('ROOT', dirname(dirname(dirname(__FILE__))));
 /**
- * DRXStore - Suppliers | Developed by Vineet | psvineet@zohomail.in
+ * DRXStore - Suppliers | Developed by Vineet | ci.vps@proton.me
  */
 require_once ROOT.'/config/app.php'; require_once ROOT.'/views/layout_admin.php'; requireAdmin();
 $errors=[];

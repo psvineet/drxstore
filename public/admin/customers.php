@@ -1,7 +1,7 @@
 <?php
 if (!defined('ROOT')) define('ROOT', dirname(dirname(dirname(__FILE__))));
 /**
- * DRXStore - Customers | Developed by Vineet | psvineet@zohomail.in
+ * DRXStore - Customers | Developed by Vineet | ci.vps@proton.me
  */
 require_once ROOT.'/config/app.php'; require_once ROOT.'/views/layout_admin.php'; requireStaff();
 $errors=[];
@@ -16,7 +16,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         header('Location: index.php?p=customers');exit;
     }
 }
-if(get('action')==='delete'&&getInt('id')){$db->delete('customers',fn($c)=>$c['id']===getInt('id'));setFlash('success','Deleted.');header('Location: index.php?p=customers');exit;}
+if(get('action')==='delete'&&getInt('id')){ verifyCsrfGet(); $db->delete('customers',fn($c)=>$c['id']===getInt('id'));setFlash('success','Deleted.');header('Location: index.php?p=customers');exit;}
 if(get('action')==='resend_verify'&&getInt('id')){
     $rc=$db->findOne('customers',fn($c)=>$c['id']===getInt('id'));
     if($rc&&empty($rc['verified'])&&!empty($rc['email'])){
@@ -65,7 +65,7 @@ adminHeader('Customers','customers');
         <?php if(!$verified&&!empty($c['email'])):?>
         <a href="index.php?p=customers&action=resend_verify&id=<?=$c['id']?>" class="btn btn-sm" style="background:#f59e0b;color:#fff;display:inline-flex;align-items:center;gap:4px" title="Resend verification email"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Resend</a>
         <?php endif;?>
-        <a href="index.php?p=customers&action=delete&id=<?=$c['id']?>" class="btn btn-danger btn-sm" data-confirm="Delete?">Delete</a>
+        <a href="<?=csrfUrl('index.php?p=customers&action=delete&id='.$c['id'])?>" class="btn btn-danger btn-sm" data-confirm="Delete?">Delete</a>
       </div></td>
     </tr>
     <?php endforeach;?>

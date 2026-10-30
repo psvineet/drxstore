@@ -1,6 +1,6 @@
 -- ============================================================
 -- DRXStore v2.0.0 — Full MySQL Schema
--- Developed by Vineet | psvineet@zohomail.in
+-- Developed by Vineet | ci.vps@proton.me
 -- Auto-generated from MySQLDB::tableSchema()
 -- Run this to create all tables on a fresh database.
 -- ============================================================

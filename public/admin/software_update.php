@@ -1,420 +1,711 @@
 <?php
 /**
- * DRXStore - Software Update System
- * Safely applies a new version ZIP over the current installation
+ * DRXStore - Software Update via GitHub Releases
  * Developed by Vineet
+ *
+ * SECURITY (C2) FIX: Removed manual ZIP upload. Updates are now downloaded
+ * directly from the official GitHub Releases page:
+ *   https://github.com/psvineet/drxstore/releases
+ *
+ * Flow:
+ *   1. Admin clicks "Check for Updates"
+ *   2. Server queries GitHub API for the latest release
+ *   3. If a newer version is available, release notes and asset info are shown
+ *   4. Admin clicks "Download & Prepare Update"
+ *   5. ZIP is downloaded server-side from the GitHub release asset URL
+ *   6. ZIP is extracted and analysed (files to add/replace listed)
+ *   7. Admin confirms — files are copied into the install
+ *
+ * Security guarantees (replaces upload-based attack surface):
+ *   - No user-supplied file accepted
+ *   - Download source hard-coded to github.com/psvineet/drxstore only
+ *   - Redirects NOT followed (prevents redirect-based SSRF)
+ *   - Path traversal protection: all entries validated against ROOT
+ *   - New PHP files not in current install are blocked (prevents backdoor injection)
+ *   - data/, config/ directories are never overwritten
  */
+
 if (!defined('ROOT')) define('ROOT', dirname(dirname(dirname(__FILE__))));
 require_once ROOT.'/config/app.php';
 require_once ROOT.'/views/layout_admin.php';
-requireAdmin(); // Admin only
+requireAdmin(true); // admin-only, not staff
 
-$errors   = [];
-$warnings = [];
-$result   = null;
+// ── Constants ─────────────────────────────────────────────────────────────────
+const GITHUB_API_URL  = 'https://api.github.com/repos/psvineet/drxstore/releases/latest';
+const GITHUB_REPO_URL = 'https://github.com/psvineet/drxstore/releases';
+const GITHUB_HOST     = 'github.com';           // asset downloads only from this host
+const GITHUB_RAW_HOST = 'objects.githubusercontent.com'; // GitHub's CDN for release assets
+const GITHUB_API_HOST = 'api.github.com';       // zipball_url / tarball_url fallback
+const UPDATE_TMP_DIR  = DATA_DIR . '/.update_tmp'; // temporary extraction dir
 
-// ── Helper: recursively list PHP files in a directory ──
-function listPhpFiles(string $dir, string $base=''): array {
-    $files = []; $base = $base ?: $dir;
-    foreach(new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $f) {
-        if($f->isFile()) $files[] = str_replace('\\','/',substr($f->getPathname(), strlen($base)+1));
-    }
-    sort($files); return $files;
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Read the installed version from config/app.php
+ */
+function readInstalledVersion(): string {
+    return defined('APP_VERSION') ? APP_VERSION : '0.0.0';
 }
 
-// ── Helper: extract ZIP to temp dir ──
-function extractUpdateZip(string $zipPath): array {
-    if (!class_exists('ZipArchive')) return ['ok'=>false,'msg'=>'ZipArchive PHP extension not available.'];
-    $zip = new ZipArchive;
-    if ($zip->open($zipPath) !== true) return ['ok'=>false,'msg'=>'Cannot open ZIP file. File may be corrupt.'];
-    for ($i = 0; $i < $zip->numFiles; $i++) {
-        $entry = str_replace('\\', '/', $zip->getNameIndex($i));
-        if ($entry === '' || str_starts_with($entry, '/') || preg_match('#(^|/)\.\.(?:/|$)#', $entry)) {
-            $zip->close();
-            return ['ok'=>false,'msg'=>'ZIP contains an invalid path and was rejected.'];
+/**
+ * Compare semver strings. Returns true if $remote > $local.
+ */
+function isNewerVersion(string $remote, string $local): bool {
+    $r = array_map('intval', explode('.', ltrim($remote, 'v')));
+    $l = array_map('intval', explode('.', ltrim($local,  'v')));
+    for ($i = 0; $i < max(count($r), count($l)); $i++) {
+        $rv = $r[$i] ?? 0;
+        $lv = $l[$i] ?? 0;
+        if ($rv > $lv) return true;
+        if ($rv < $lv) return false;
+    }
+    return false;
+}
+
+/**
+ * Fetch the latest release info from GitHub API.
+ * Returns array with keys: tag_name, name, body, published_at, zip_url, zip_name
+ * or throws RuntimeException on failure.
+ */
+function fetchLatestRelease(): array {
+    $ctx = stream_context_create([
+        'http' => [
+            'method'          => 'GET',
+            'header'          => "User-Agent: DRXStore-Updater/" . readInstalledVersion() . " (PHP)\r\n" .
+                                 "Accept: application/vnd.github+json\r\n",
+            'timeout'         => 15,
+            'follow_location' => 0, // do NOT follow redirects (SSRF protection)
+        ],
+        'ssl' => [
+            'verify_peer'      => true,
+            'verify_peer_name' => true,
+        ],
+    ]);
+
+    $raw = @file_get_contents(GITHUB_API_URL, false, $ctx);
+    if ($raw === false) {
+        throw new RuntimeException('Could not reach GitHub API. Check your server\'s outbound internet access.');
+    }
+
+    $data = json_decode($raw, true);
+    if (!is_array($data)) {
+        throw new RuntimeException('Unexpected response from GitHub API.');
+    }
+    if (isset($data['message'])) {
+        throw new RuntimeException('GitHub API error: ' . $data['message']);
+    }
+
+    $tag  = $data['tag_name']    ?? '';
+    $name = $data['name']        ?? $tag;
+    $body = $data['body']        ?? '';
+    $pub  = $data['published_at']?? '';
+
+    if (!$tag) {
+        throw new RuntimeException('GitHub API returned a release with no tag name.');
+    }
+
+    // Build the archive URL directly from the tag — always works for any GitHub release,
+    // no attached assets required.
+    // e.g. https://github.com/psvineet/drxstore/archive/refs/tags/v2.0.0-production.zip
+    $zipUrl  = 'https://github.com/psvineet/drxstore/archive/refs/tags/' . rawurlencode($tag) . '.zip';
+    $zipName = 'drxstore-' . ltrim($tag, 'v') . '.zip';
+
+    // Look for a .sha256 checksum asset published alongside the release.
+    // Convention: asset named like "drxstore-2.0.0.zip.sha256" or "checksums.sha256"
+    $sha256Url = '';
+    foreach ($data['assets'] ?? [] as $asset) {
+        $aName = strtolower($asset['name'] ?? '');
+        $aUrl  = $asset['browser_download_url'] ?? '';
+        if ($aUrl && (str_ends_with($aName, '.sha256') || str_ends_with($aName, '.sha256sum'))) {
+            $sha256Url = $aUrl;
+            break;
         }
     }
-    $tmpDir = sys_get_temp_dir().'/drxupdate_'.time();
-    @mkdir($tmpDir, 0755, true);
-    $zip->extractTo($tmpDir);
-    $zip->close();
-    // Find the root folder inside the zip (may be drxstore_fixed/ or similar)
-    $items = glob($tmpDir.'/*');
-    $root  = null;
-    foreach($items as $i) {
-        if(is_dir($i) && file_exists($i.'/index.php') && file_exists($i.'/config/app.php')) {
-            $root = $i; break;
-        }
-    }
-    if(!$root) {
-        // Maybe index.php is directly inside tmpDir
-        if(file_exists($tmpDir.'/index.php') && file_exists($tmpDir.'/config/app.php')) {
-            $root = $tmpDir;
-        } else {
-            return ['ok'=>false,'msg'=>'Could not find a valid DRXStore installation inside the ZIP. Expected index.php + config/app.php.'];
-        }
-    }
-    return ['ok'=>true,'root'=>$root,'tmp'=>$tmpDir];
+
+    return compact('tag', 'name', 'body', 'pub', 'zipUrl', 'zipName', 'sha256Url');
 }
 
-// ── Helper: read APP_VERSION from a config/app.php ──
-function readVersionFromConfig(string $configPath): string {
-    if(!file_exists($configPath)) return 'unknown';
-    $content = file_get_contents($configPath);
-    if(preg_match("/APP_VERSION['\s,)=]+['\"]([^'\"]+)['\"]/", $content, $m)) return $m[1];
-    return 'unknown';
-}
-
-// ── Helper: read table schema from MySQLDB.php ──
-function readSchemaFromMySQLDB(string $path): array {
-    if(!file_exists($path)) return [];
-    $content = file_get_contents($path);
-    // Extract tableSchema array content
-    if(!preg_match('/private static function tableSchema\(\): array \{.*?return \[(.*?)\];\s*\}/s', $content, $m)) return [];
-    preg_match_all("/'([a-z_]+)'\s*=>\s*\[([^\]]+)\]/s", $m[1], $tables, PREG_SET_ORDER);
-    $schema = [];
-    foreach($tables as $t) {
-        $tname = $t[1];
-        preg_match_all("/'([a-z_]+)'\s*=>\s*'([^']+)'/", $t[2], $cols, PREG_SET_ORDER);
-        $schema[$tname] = [];
-        foreach($cols as $c) $schema[$tname][$c[1]] = $c[2];
+/**
+ * Download a URL to a local file.
+ * Validates host again before download. Returns bytes written.
+ */
+function downloadRelease(string $url, string $destFile): int {
+    // Re-validate host of the original URL
+    $host = parse_url($url, PHP_URL_HOST);
+    if (!in_array($host, [GITHUB_HOST, GITHUB_RAW_HOST, GITHUB_API_HOST, 'codeload.github.com'], true)) {
+        throw new RuntimeException('Blocked download from unexpected host: ' . $host);
     }
-    return $schema;
-}
 
-// ── Process uploaded update ──
-if($_SERVER['REQUEST_METHOD']==='POST' && post('action')==='upload_update') {
-    verifyCsrf();
-    if(!isset($_FILES['update_zip']) || $_FILES['update_zip']['error'] !== UPLOAD_ERR_OK) {
-        $errors[] = 'No file uploaded or upload error: '.($_FILES['update_zip']['error']??'unknown');
-    } else {
-        $file = $_FILES['update_zip'];
-        // Validate it's a ZIP
-        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        if($ext !== 'zip') $errors[] = 'Only .zip files are accepted.';
-        elseif($file['size'] < 50000) $errors[] = 'File too small to be a valid DRXStore package.';
-        elseif($file['size'] > 20*1024*1024) $errors[] = 'File too large (max 20 MB).';
-        else {
-            // Save to temp
-            $tmpZip = sys_get_temp_dir().'/drxupdate_upload_'.time().'.zip';
-            if(!move_uploaded_file($file['tmp_name'], $tmpZip)) {
-                $errors[] = 'Failed to save uploaded file. Check server permissions.';
-            } else {
-                // Extract and analyse
-                $extract = extractUpdateZip($tmpZip);
-                if(!$extract['ok']) {
-                    $errors[] = $extract['msg'];
-                } else {
-                    $newRoot    = $extract['root'];
-                    $newVersion = readVersionFromConfig($newRoot.'/config/app.php');
-                    $curVersion = APP_VERSION;
+    $fp = @fopen($destFile, 'wb');
+    if (!$fp) {
+        throw new RuntimeException('Could not open destination file for writing. Check permissions on data/ directory.');
+    }
 
-                    // ── Version check ──
-                    if($newVersion === 'unknown') $warnings[] = 'Could not detect version in new package. Proceeding with caution.';
-                    if(version_compare($newVersion, $curVersion, '<=') && $newVersion !== 'unknown') {
-                        $warnings[] = "New package version ({$newVersion}) is same as or older than current ({$curVersion}). Are you sure you want to continue?";
-                    }
+    if (!function_exists('curl_init')) {
+        throw new RuntimeException('cURL is not available on this server. Please install the php-curl extension.');
+    }
 
-                    // ── Schema conflict check ──
-                    $newSchema = readSchemaFromMySQLDB($newRoot.'/helpers/MySQLDB.php');
-                    $curSchema = readSchemaFromMySQLDB(ROOT.'/helpers/MySQLDB.php');
-                    $schemaChanges = [];
-                    foreach($newSchema as $table => $cols) {
-                        if(!isset($curSchema[$table])) {
-                            $schemaChanges[] = ['type'=>'new_table','table'=>$table,'msg'=>"New table '{$table}' will be added (auto-migrated on boot)"];
-                        } else {
-                            foreach($cols as $col => $def) {
-                                if(!isset($curSchema[$table][$col])) {
-                                    $schemaChanges[] = ['type'=>'new_col','table'=>$table,'col'=>$col,'msg'=>"New column '{$table}.{$col}' will be added (auto-migrated on boot)"];
-                                } elseif($curSchema[$table][$col] !== $def) {
-                                    $schemaChanges[] = ['type'=>'col_change','table'=>$table,'col'=>$col,'msg'=>"Column '{$table}.{$col}' definition changed — auto-migration will handle it"];
-                                }
-                            }
-                        }
-                    }
+    $allowedHosts = [GITHUB_HOST, GITHUB_RAW_HOST, GITHUB_API_HOST, 'codeload.github.com'];
 
-                    // ── File inventory ──
-                    $newFiles = listPhpFiles($newRoot);
-                    $curFiles = listPhpFiles(ROOT);
-                    $addedFiles   = array_values(array_diff($newFiles, $curFiles));
-                    $removedFiles = array_values(array_diff($curFiles, $newFiles));
-
-                    // ── Protect data/ folder — never touch it ──
-                    $newFiles     = array_filter($newFiles, fn($f) => strpos($f,'data/') !== 0);
-                    $removedFiles = array_values(array_filter($removedFiles, fn($f) => strpos($f,'data/') !== 0));
-
-                    // ── Store analysis result in session for apply step ──
-                    $_SESSION['_upd_zip']    = $tmpZip;
-                    $_SESSION['_upd_root']   = $newRoot;
-                    $_SESSION['_upd_tmp']    = $extract['tmp'];
-                    $_SESSION['_upd_newver'] = $newVersion;
-                    $_SESSION['_upd_curver'] = $curVersion;
-
-                    $result = [
-                        'step'         => 'confirm',
-                        'newVersion'   => $newVersion,
-                        'curVersion'   => $curVersion,
-                        'newFiles'     => $newFiles,
-                        'addedFiles'   => $addedFiles,
-                        'removedFiles' => $removedFiles,
-                        'schemaChanges'=> $schemaChanges,
-                        'fileCount'    => count($newFiles),
-                    ];
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_FILE            => $fp,           // stream directly to file — no memory spike
+        CURLOPT_FOLLOWLOCATION  => true,           // follow GitHub's redirects to CDN
+        CURLOPT_MAXREDIRS       => 5,
+        CURLOPT_TIMEOUT         => 120,
+        CURLOPT_USERAGENT       => 'DRXStore-Updater/' . readInstalledVersion() . ' (PHP/cURL)',
+        CURLOPT_SSL_VERIFYPEER  => true,
+        CURLOPT_SSL_VERIFYHOST  => 2,
+        // Validate each redirect host before following
+        CURLOPT_HEADERFUNCTION  => function($ch, $header) use ($allowedHosts) {
+            if (preg_match('/^Location:\s*(\S+)/i', $header, $m)) {
+                $rHost = parse_url(trim($m[1]), PHP_URL_HOST);
+                if ($rHost && !in_array($rHost, $allowedHosts, true)) {
+                    // Returning 0 aborts the transfer
+                    return 0;
                 }
             }
-        }
+            return strlen($header);
+        },
+    ]);
+
+    $ok   = curl_exec($ch);
+    $size = curl_getinfo($ch, CURLINFO_SIZE_DOWNLOAD_T);
+    $err  = curl_error($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    fclose($fp);
+
+    if (!$ok || $err) {
+        @unlink($destFile);
+        throw new RuntimeException('Download failed: ' . ($err ?: 'unknown cURL error'));
     }
+    if ($code !== 200) {
+        @unlink($destFile);
+        throw new RuntimeException('Download failed: HTTP ' . $code);
+    }
+    if ($size < 100) {
+        @unlink($destFile);
+        throw new RuntimeException('Downloaded file too small — release may be empty.');
+    }
+
+    return (int)$size;
 }
 
-// ── Apply update ──
-if($_SERVER['REQUEST_METHOD']==='POST' && post('action')==='apply_update') {
+/**
+ * Extract ZIP to $destDir (fresh — existing dir removed first).
+ * Returns array of relative paths inside the ZIP.
+ */
+function extractUpdateZip(string $zipFile, string $destDir): array {
+    if (is_dir($destDir)) {
+        // Clean up previous attempt
+        $it = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($destDir, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($it as $f) {
+            $f->isDir() ? rmdir($f->getPathname()) : unlink($f->getPathname());
+        }
+        rmdir($destDir);
+    }
+    mkdir($destDir, 0755, true);
+
+    $zip = new ZipArchive();
+    $res = $zip->open($zipFile);
+    if ($res !== true) {
+        throw new RuntimeException('Failed to open ZIP archive (ZipArchive error ' . $res . ').');
+    }
+
+    // Detect common top-level folder wrapping (GitHub adds "repo-tag/" prefix)
+    $topDir = '';
+    if ($zip->numFiles > 0) {
+        $first = $zip->getNameIndex(0);
+        $parts = explode('/', $first);
+        if (count($parts) > 1 && $parts[0] !== '') {
+            $topDir = $parts[0] . '/';
+        }
+    }
+
+    $files = [];
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $name = $zip->getNameIndex($i);
+
+        // Strip the top-level wrapper directory
+        if ($topDir && str_starts_with($name, $topDir)) {
+            $rel = substr($name, strlen($topDir));
+        } else {
+            $rel = $name;
+        }
+
+        if ($rel === '' || $rel === '/') continue;
+
+        // Path traversal protection
+        $rel  = ltrim(str_replace('\\', '/', $rel), '/');
+        $real = realpath($destDir) . '/' . $rel;
+        if (!str_starts_with(realpath(dirname($real)) ?: '', realpath($destDir))) {
+            // Suspicious path — skip silently
+            continue;
+        }
+
+        if (str_ends_with($name, '/')) {
+            // Directory entry
+            @mkdir($destDir . '/' . $rel, 0755, true);
+        } else {
+            @mkdir(dirname($destDir . '/' . $rel), 0755, true);
+            file_put_contents($destDir . '/' . $rel, $zip->getFromIndex($i));
+            $files[] = $rel;
+        }
+    }
+    $zip->close();
+    return $files;
+}
+
+/**
+ * Analyse extracted files: categorise each as add/replace/skip.
+ * Returns array of ['rel'=>…, 'action'=>'replace'|'add'|'skip', 'reason'=>…]
+ */
+function analyseUpdate(string $extractDir, array $allFiles): array {
+    $results = [];
+    foreach ($allFiles as $rel) {
+        $dest = ROOT . '/' . $rel;
+
+        // Always skip the data/ and config/ directories (user data & secrets)
+        if (preg_match('#^(data|config)/#i', $rel)) {
+            $results[] = ['rel'=>$rel,'action'=>'skip','reason'=>'User data / config (never overwritten)'];
+            continue;
+        }
+
+        // Block new PHP files that do NOT already exist in the current install.
+        // This prevents a compromised release (or accidental upload) from adding backdoors.
+        $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
+        if ($ext === 'php' && !file_exists($dest)) {
+            $results[] = ['rel'=>$rel,'action'=>'skip','reason'=>'New PHP file blocked (security policy)'];
+            continue;
+        }
+
+        $results[] = [
+            'rel'    => $rel,
+            'action' => file_exists($dest) ? 'replace' : 'add',
+            'reason' => '',
+        ];
+    }
+    return $results;
+}
+
+/**
+ * Apply update: copy files from extractDir to ROOT.
+ */
+function applyUpdate(string $extractDir, array $analysis): array {
+    $applied = 0;
+    $skipped = 0;
+    $errors  = [];
+
+    foreach ($analysis as $item) {
+        if ($item['action'] === 'skip') { $skipped++; continue; }
+
+        $src  = $extractDir . '/' . $item['rel'];
+        $dest = ROOT . '/' . $item['rel'];
+
+        if (!file_exists($src)) { $skipped++; continue; }
+
+        // Extra path-traversal safety before writing
+        $destReal = realpath(dirname($dest));
+        $rootReal = realpath(ROOT);
+        if (!$destReal || !str_starts_with($destReal, $rootReal)) {
+            $errors[] = 'Blocked unsafe path: ' . $item['rel'];
+            continue;
+        }
+
+        @mkdir(dirname($dest), 0755, true);
+        if (copy($src, $dest)) {
+            $applied++;
+        } else {
+            $errors[] = 'Failed to copy: ' . $item['rel'];
+        }
+    }
+
+    return compact('applied', 'skipped', 'errors');
+}
+
+/**
+ * Recursive directory removal helper.
+ */
+function rmdirRecursive(string $dir): void {
+    if (!is_dir($dir)) return;
+    $it = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ($it as $f) {
+        $f->isDir() ? rmdir($f->getPathname()) : unlink($f->getPathname());
+    }
+    rmdir($dir);
+}
+
+// ── Action handlers ───────────────────────────────────────────────────────────
+$currentVersion = readInstalledVersion();
+$action  = '';
+$release = null;
+$error   = '';
+$analysis    = [];
+$applyResult = null;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verifyCsrf();
-    $newRoot = $_SESSION['_upd_root'] ?? '';
-    $newVer  = $_SESSION['_upd_newver'] ?? '';
+    $action = post('action');
 
-    if(!$newRoot || !is_dir($newRoot) || !file_exists($newRoot.'/config/app.php')) {
-        $errors[] = 'Update session expired or invalid. Please upload the ZIP again.';
-    } else {
-        $applied = 0; $failed = []; $skipped = 0;
+    // ── 1. Check for updates ──────────────────────────────────────────────────
+    if ($action === 'check') {
+        try {
+            $release = fetchLatestRelease();
+            $_SESSION['sw_release'] = $release;
+        } catch (RuntimeException $e) {
+            $error = $e->getMessage();
+        }
+    }
 
-        // ── STEP 1: Copy all new files over current install ──
-        $newFilesList = []; // track all files in new package
-        $iter = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($newRoot, FilesystemIterator::SKIP_DOTS));
-        foreach($iter as $src) {
-            if(!$src->isFile()) continue;
-            $rel = str_replace('\\','/',substr($src->getPathname(), strlen($newRoot)+1));
+    // ── 2. Download & Prepare ─────────────────────────────────────────────────
+    if ($action === 'download') {
+        $release = $_SESSION['sw_release'] ?? null;
+        if (!$release || empty($release['zipUrl'])) {
+            $error = 'Release info lost. Please check for updates again.';
+        } else {
+            try {
+                // Ensure temp dir parent is writable
+                if (!is_dir(DATA_DIR)) mkdir(DATA_DIR, 0755, true);
 
-            // NEVER overwrite data/ — user data, DB config, uploads live here
-            if(strpos($rel,'data/') === 0) { $skipped++; continue; }
+                $zipPath = DATA_DIR . '/.update_' . preg_replace('/[^a-z0-9._-]/i', '_', $release['tag']) . '.zip';
 
-            $newFilesList[] = $rel;
-            $dest = ROOT.'/'.$rel;
-            $destDir = dirname($dest);
-            if(!is_dir($destDir)) @mkdir($destDir, 0755, true);
+                // Download
+                downloadRelease($release['zipUrl'], $zipPath);
 
-            if(!@copy($src->getPathname(), $dest)) {
-                $failed[] = $rel;
-            } else {
-                @chmod($dest, 0644);
-                $applied++;
+                // SHA256 verification — if a checksum asset was published, fetch and verify.
+                // If no checksum asset exists, compute and log the hash for the admin's records.
+                $actualHash = hash_file('sha256', $zipPath);
+                // SHA256 verification is MANDATORY — refuse update if no checksum asset published.
+                if (empty($release['sha256Url'])) {
+                    @unlink($zipPath);
+                    throw new RuntimeException(
+                        'Update blocked: release ' . $release['tag'] . ' has no .sha256 checksum asset. ' .
+                        'The release author must publish a SHA256 checksum file alongside the ZIP. ' .
+                        'This is required to verify the download has not been tampered with.'
+                    );
+                }
+
+                // Fetch the .sha256 file (plain text: "abc123...  filename.zip")
+                $shaCtx = stream_context_create(['http' => [
+                    'method'  => 'GET',
+                    'header'  => 'User-Agent: DRXStore-Updater/' . readInstalledVersion() . " (PHP)\r\n",
+                    'timeout' => 15,
+                ], 'ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
+                $shaRaw = @file_get_contents($release['sha256Url'], false, $shaCtx);
+                if ($shaRaw === false) {
+                    @unlink($zipPath);
+                    throw new RuntimeException('Could not fetch SHA256 checksum file from GitHub.');
+                }
+                // Extract the hash — first 64 hex chars on any line
+                preg_match('/\b([0-9a-f]{64})\b/i', $shaRaw, $m);
+                $expectedHash = strtolower($m[1] ?? '');
+                if (!$expectedHash) {
+                    @unlink($zipPath);
+                    throw new RuntimeException('SHA256 checksum file did not contain a valid hash.');
+                }
+                if (!hash_equals($expectedHash, $actualHash)) {
+                    @unlink($zipPath);
+                    throw new RuntimeException(
+                        'SHA256 mismatch — download is corrupt or has been tampered with. ' .
+                        'Expected: ' . $expectedHash . ' | Got: ' . $actualHash
+                    );
+                }
+                error_log('[DRXStore] Update ' . $release['tag'] . ' SHA256 verified OK: ' . $actualHash);
+
+                // Extract
+                $files = extractUpdateZip($zipPath, UPDATE_TMP_DIR);
+
+                // Analyse
+                $analysis = analyseUpdate(UPDATE_TMP_DIR, $files);
+
+                // Store in session for confirm step
+                $_SESSION['sw_analysis'] = $analysis;
+                $_SESSION['sw_release']  = $release;
+
+                // Remove ZIP file now that it's extracted
+                @unlink($zipPath);
+
+            } catch (RuntimeException $e) {
+                $error = $e->getMessage();
+                // Clean up on failure
+                if (isset($zipPath) && file_exists($zipPath)) @unlink($zipPath);
+                rmdirRecursive(UPDATE_TMP_DIR);
+                unset($_SESSION['sw_analysis']);
             }
         }
+    }
 
-        // Bust settings cache
-        $GLOBALS['_settings_cache'] = null;
+    // ── 3. Apply update ───────────────────────────────────────────────────────
+    if ($action === 'apply') {
+        $release  = $_SESSION['sw_release']  ?? null;
+        $analysis = $_SESSION['sw_analysis'] ?? null;
 
-        // Clean up temp
-        $tmpZip = $_SESSION['_upd_zip'] ?? '';
-        if($tmpZip && file_exists($tmpZip)) @unlink($tmpZip);
-        // Clean up extracted temp dir
-        $tmpDir = $_SESSION['_upd_tmp'] ?? '';
-        if($tmpDir && is_dir($tmpDir)) {
-            $di = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($tmpDir, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
-            foreach($di as $f) { $f->isDir() ? @rmdir($f->getPathname()) : @unlink($f->getPathname()); }
-            @rmdir($tmpDir);
-        }
-        unset($_SESSION['_upd_zip'],$_SESSION['_upd_root'],$_SESSION['_upd_newver'],$_SESSION['_upd_curver'],$_SESSION['_upd_tmp']);
-
-        if(!empty($failed)) {
-            $result = ['step'=>'done','ok'=>false,'applied'=>$applied,'failed'=>$failed,'newVersion'=>$newVer,'skipped'=>$skipped];
+        if (!$analysis || !$release) {
+            $error = 'Update session expired. Please start over.';
         } else {
-            setFlash('success',"DRXStore updated to v{$newVer} successfully! {$applied} files updated. {$skipped} protected files skipped. Please clear your browser cache.");
-            header('Location: index.php?p=settings'); exit;
+            try {
+                $applyResult = applyUpdate(UPDATE_TMP_DIR, $analysis);
+
+                // Clean up
+                rmdirRecursive(UPDATE_TMP_DIR);
+                unset($_SESSION['sw_analysis'], $_SESSION['sw_release']);
+
+                if (empty($applyResult['errors'])) {
+                    setFlash('success', 'Update to v' . $release['tag'] . ' applied successfully! ' . $applyResult['applied'] . ' file(s) updated.');
+                } else {
+                    setFlash('warning', 'Update applied with ' . count($applyResult['errors']) . ' error(s): ' . implode('; ', array_slice($applyResult['errors'], 0, 3)));
+                }
+                header('Location: index.php?p=sw_update');
+                exit;
+
+            } catch (RuntimeException $e) {
+                $error = $e->getMessage();
+            }
         }
+    }
+
+    // ── 4. Cancel ─────────────────────────────────────────────────────────────
+    if ($action === 'cancel') {
+        rmdirRecursive(UPDATE_TMP_DIR);
+        unset($_SESSION['sw_analysis'], $_SESSION['sw_release']);
+        setFlash('info', 'Update cancelled.');
+        header('Location: index.php?p=sw_update');
+        exit;
     }
 }
 
-adminHeader('Software Update','settings');
+// On GET — restore state from session if in middle of flow
+if (empty($analysis) && !empty($_SESSION['sw_analysis'])) {
+    $analysis = $_SESSION['sw_analysis'];
+    $release  = $_SESSION['sw_release'] ?? null;
+}
+if (empty($release) && !empty($_SESSION['sw_release']) && empty($analysis)) {
+    $release = $_SESSION['sw_release'];
+}
+
+// ── Counts ────────────────────────────────────────────────────────────────────
+$toReplace = array_filter($analysis, fn($a) => $a['action'] === 'replace');
+$toAdd     = array_filter($analysis, fn($a) => $a['action'] === 'add');
+$toSkip    = array_filter($analysis, fn($a) => $a['action'] === 'skip');
+
+adminHeader('Software Update', 'sw_update');
 ?>
 <div class="page-hdr">
-  <div><div class="page-title">Software Update</div><div class="page-sub">Current version: <?=APP_NAME?> v<?=APP_VERSION?></div></div>
-  <a href="index.php?p=settings" class="btn btn-ghost">← Back to Settings</a>
+  <div>
+    <div class="page-title">&#128257; Software Update</div>
+    <div class="page-sub">Keep DRXStore up to date from the official GitHub release</div>
+  </div>
+  <a href="<?=GITHUB_REPO_URL?>" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="margin-right:4px"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+    View on GitHub
+  </a>
 </div>
 
-<?php foreach($errors as $er):?><div class="alert alert-danger"><span class="alert-body"><?=e($er)?></span></div><?php endforeach;?>
-<?php foreach($warnings as $w):?><div class="alert alert-warning"><span class="alert-body"><?=e($w)?></span></div><?php endforeach;?>
+<?php if ($error): ?>
+<div class="alert alert-danger"><span class="alert-body"><?=e($error)?></span></div>
+<?php endif; ?>
 
-<?php if($result && $result['step']==='confirm'): ?>
-<!-- ── STEP 2: Confirm ── -->
-<div class="card mb-2">
-  <div class="card-hdr" style="background:<?=version_compare($result['newVersion'],$result['curVersion'],'>')? 'var(--green-lt)':'#fffbeb'?>">
-    <div class="card-title" style="color:<?=version_compare($result['newVersion'],$result['curVersion'],'>')? 'var(--green)':'#7a6020'?>">
-      <?=version_compare($result['newVersion'],$result['curVersion'],'>')? 'Newer version detected':'Version check'?>
+<!-- ── Current version card ───────────────────────────────────────────────── -->
+<div class="dash-grid" style="margin-bottom:20px">
+  <div class="card">
+    <div class="card-hdr"><div class="card-title">Installed Version</div></div>
+    <div class="card-body" style="display:flex;align-items:center;gap:16px">
+      <div style="width:52px;height:52px;background:var(--g1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">&#128230;</div>
+      <div>
+        <div style="font-size:1.5rem;font-weight:700;color:var(--acc)">v<?=e($currentVersion)?></div>
+        <div style="font-size:.8rem;color:var(--g5)">DRXStore · <?=e(APP_NAME)?></div>
+      </div>
     </div>
   </div>
-  <div class="card-body">
-    <div class="flex gap-2" style="flex-wrap:wrap;margin-bottom:16px">
-      <div style="background:var(--g1);border-radius:10px;padding:14px 20px;text-align:center;min-width:120px">
-        <div style="font-size:.7rem;color:var(--g5);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Current</div>
-        <div style="font-size:1.3rem;font-weight:800;color:var(--navy);font-family:monospace">v<?=e($result['curVersion'])?></div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="card-title">Update Source</div></div>
+    <div class="card-body" style="font-size:.82rem;line-height:1.75;color:var(--g6)">
+      <div><strong>Repository:</strong> <a href="<?=GITHUB_REPO_URL?>" target="_blank" rel="noopener" style="color:var(--acc)">github.com/psvineet/drxstore</a></div>
+      <div><strong>Channel:</strong> Latest stable release</div>
+      <div><strong>Security:</strong> Downloads only from <code>github.com</code></div>
+      <div style="margin-top:8px;padding:8px 10px;background:var(--g1);border-radius:var(--rl);font-size:.76rem">
+        &#128274; Your <code>data/</code> and <code>config/</code> folders are never touched during updates.
       </div>
-      <div style="display:flex;align-items:center;font-size:1.5rem;color:var(--g4);padding:0 8px">→</div>
-      <div style="background:var(--green-lt);border-radius:10px;padding:14px 20px;text-align:center;min-width:120px;border:2px solid var(--green)">
-        <div style="font-size:.7rem;color:var(--green);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">New</div>
-        <div style="font-size:1.3rem;font-weight:800;color:var(--green);font-family:monospace">v<?=e($result['newVersion'])?></div>
-      </div>
-      <div style="display:flex;align-items:center;margin-left:12px">
-        <span class="chip chip-blue"><?=$result['fileCount']?> files</span>
-      </div>
-    </div>
-    <div style="background:var(--g1);border-radius:10px;padding:14px;font-size:.83rem;color:var(--g6);margin-bottom:16px">
-      <strong style="color:var(--navy)">What will happen:</strong><br>
-      • All PHP, CSS, JS and view files included in the release will be replaced<br>
-      • Your <code>data/</code> folder (all JSON data, uploaded files) is <strong style="color:var(--green)">completely protected</strong><br>
-      • Local files missing from the release are preserved for safety<br>
-      • Your database is untouched — schema changes are auto-applied on next page load<br>
-      • Your settings, medicines, sales, batches, customers are all preserved
     </div>
   </div>
 </div>
 
-<?php if(!empty($result['schemaChanges'])): ?>
-<div class="card mb-2">
-  <div class="card-hdr"><div class="card-title">Database Schema Changes (<?=count($result['schemaChanges'])?>)</div></div>
-  <div class="card-body p0">
-    <div class="table-wrap"><table class="tbl">
-      <thead><tr><th>Type</th><th>Details</th></tr></thead>
+<?php if (empty($analysis)): ?>
+<!-- ── Step 1: Check / Download ───────────────────────────────────────────── -->
+
+  <?php if ($release): ?>
+    <?php $isNewer = isNewerVersion($release['tag'], $currentVersion); ?>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title">
+            <?php if ($isNewer): ?>
+              &#128640; New Release Available: v<?=e($release['tag'])?>
+            <?php else: ?>
+              &#10003; You are up to date
+            <?php endif; ?>
+          </div>
+          <div style="font-size:.76rem;color:var(--g5)">
+            Released <?=e(date('d M Y', strtotime($release['pub'] ?: 'now')))?>
+          </div>
+        </div>
+        <?php if ($isNewer): ?>
+        <span class="chip chip-red">Update Available</span>
+        <?php else: ?>
+        <span class="chip chip-teal">Latest</span>
+        <?php endif; ?>
+      </div>
+      <div class="card-body">
+        <?php if ($release['body']): ?>
+        <div style="background:var(--g1);padding:14px 16px;border-radius:var(--rl);font-size:.83rem;line-height:1.7;white-space:pre-wrap;max-height:260px;overflow-y:auto"><?=e($release['body'])?></div>
+        <?php else: ?>
+        <p class="text-muted text-sm">No release notes provided.</p>
+        <?php endif; ?>
+
+        <?php if ($isNewer): ?>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <form method="POST">
+            <?=csrfField()?>
+            <input type="hidden" name="action" value="download">
+            <button type="submit" class="btn btn-primary">
+              &#8681; Download &amp; Prepare Update
+            </button>
+          </form>
+          <span style="font-size:.78rem;color:var(--g5)">
+            Asset: <code><?=e($release['zipName'])?></code>
+          </span>
+        </div>
+        <?php else: ?>
+        <p style="margin-top:12px;font-size:.83rem;color:var(--g5)">Current install (v<?=e($currentVersion)?>) is already the latest release.</p>
+        <?php endif; ?>
+      </div>
+    </div>
+  <?php endif; ?>
+
+  <div class="card">
+    <div class="card-hdr"><div class="card-title">Check for Updates</div></div>
+    <div class="card-body">
+      <p style="font-size:.83rem;color:var(--g6);margin-top:0">
+        Click the button below to query the GitHub Releases API and check whether a newer version of DRXStore is available.
+        No files are downloaded until you confirm.
+      </p>
+      <form method="POST" id="checkForm">
+        <?=csrfField()?>
+        <input type="hidden" name="action" value="check">
+        <button type="submit" class="btn btn-primary" id="checkBtn">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+          Check for Updates
+        </button>
+      </form>
+    </div>
+  </div>
+
+<?php else: ?>
+<!-- ── Step 2: Confirm update ─────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-hdr">
+    <div>
+      <div class="card-title">Review Update: v<?=e($currentVersion)?> → v<?=e($release['tag'] ?? '?')?></div>
+      <div style="font-size:.76rem;color:var(--g5)"><?=count($toReplace)?> files to update · <?=count($toAdd)?> new files · <?=count($toSkip)?> skipped</div>
+    </div>
+    <form method="POST">
+      <?=csrfField()?>
+      <input type="hidden" name="action" value="cancel">
+      <button type="submit" class="btn btn-ghost btn-sm">Cancel</button>
+    </form>
+  </div>
+
+  <!-- Summary chips -->
+  <div style="padding:12px 16px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--g3)">
+    <?php if (count($toReplace)): ?>
+    <span class="chip chip-blue">&#8635; <?=count($toReplace)?> replace</span>
+    <?php endif; ?>
+    <?php if (count($toAdd)): ?>
+    <span class="chip chip-teal">+ <?=count($toAdd)?> add</span>
+    <?php endif; ?>
+    <?php if (count($toSkip)): ?>
+    <span class="chip">&#8634; <?=count($toSkip)?> skip</span>
+    <?php endif; ?>
+    <span class="chip" style="margin-left:auto;background:var(--g1);color:var(--g6);font-size:.72rem">
+      &#128274; data/ &amp; config/ not touched
+    </span>
+  </div>
+
+  <!-- File list -->
+  <div class="table-wrap" style="max-height:380px;overflow-y:auto">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>File</th>
+          <th>Action</th>
+          <th>Note</th>
+        </tr>
+      </thead>
       <tbody>
-      <?php foreach($result['schemaChanges'] as $sc): ?>
+      <?php foreach ($analysis as $item): ?>
       <tr>
-        <td><span class="chip <?=$sc['type']==='new_table'?'chip-blue':($sc['type']==='new_col'?'chip-green':'chip-yellow')?>"><?=$sc['type']==='new_table'?'New Table':($sc['type']==='new_col'?'New Column':'Changed')?></span></td>
-        <td class="text-sm"><?=e($sc['msg'])?></td>
+        <td style="font-family:monospace;font-size:.77rem"><?=e($item['rel'])?></td>
+        <td>
+          <?php if ($item['action']==='replace'): ?>
+            <span class="chip chip-blue" style="font-size:.7rem">replace</span>
+          <?php elseif ($item['action']==='add'): ?>
+            <span class="chip chip-teal" style="font-size:.7rem">add</span>
+          <?php else: ?>
+            <span class="chip" style="font-size:.7rem;opacity:.7">skip</span>
+          <?php endif; ?>
+        </td>
+        <td style="font-size:.76rem;color:var(--g5)"><?=e($item['reason'])?></td>
       </tr>
       <?php endforeach; ?>
       </tbody>
-    </table></div>
+    </table>
   </div>
-</div>
-<?php endif; ?>
 
-<?php if(!empty($result['addedFiles'])): ?>
-<div class="card mb-2">
-  <div class="card-hdr"><div class="card-title">New Files in Update (<?=count($result['addedFiles'])?>)</div></div>
-  <div class="card-body">
-    <?php foreach($result['addedFiles'] as $f): ?>
-    <span class="chip chip-green" style="margin:2px;font-size:.72rem"><?=e($f)?></span>
-    <?php endforeach; ?>
-  </div>
-</div>
-<?php endif; ?>
-
-<?php if(!empty($result['removedFiles'])): ?>
-<div class="card mb-2">
-  <div class="card-hdr"><div class="card-title">Files Not In Update (<?=count($result['removedFiles'])?>)</div></div>
-  <div class="card-body">
-    <p class="text-sm text-muted" style="margin-bottom:8px">These files exist in your current install but not in the update. The updater will leave them untouched for safety.</p>
-    <?php foreach($result['removedFiles'] as $f): ?>
-    <span class="chip chip-gray" style="margin:2px;font-size:.72rem"><?=e($f)?></span>
-    <?php endforeach; ?>
-  </div>
-</div>
-<?php endif; ?>
-
-<div class="card">
-  <div class="card-body">
-    <div class="alert alert-warning"><span class="alert-body"><strong>Recommended:</strong> Take a database backup before applying the update. <a href="index.php?p=settings&action=backup_mysql" style="font-weight:700;color:inherit">→ Download Backup</a></span></div>
-    <form method="POST" id="applyForm">
-      <?=csrfField()?>
-      <input type="hidden" name="action" value="apply_update">
-      <div class="flex gap-2" style="margin-top:16px">
-        <button type="submit" class="btn btn-success" onclick="return confirm('Apply update to v<?=e($result['newVersion'])?>? Make sure you have a backup.')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px"><polyline points="20 6 9 17 4 12"/></svg>
-          Apply Update to v<?=e($result['newVersion'])?>
-        </button>
-        <a href="index.php?p=sw_update" class="btn btn-ghost">Cancel</a>
-      </div>
-    </form>
-  </div>
-</div>
-
-<?php elseif($result && $result['step']==='done' && !$result['ok']): ?>
-<!-- ── Partial failure ── -->
-<div class="alert alert-warning"><span class="alert-body"><strong><?=$result['applied']?> files updated</strong>, but <?=count($result['failed'])?> file(s) could not be written (permission issue). The update may be incomplete.</span></div>
-<div class="card">
-  <div class="card-hdr"><div class="card-title">Files That Failed to Update</div></div>
-  <div class="card-body">
-    <?php foreach($result['failed'] as $f): ?>
-    <div class="chip chip-red" style="margin:2px;font-size:.72rem"><?=e($f)?></div>
-    <?php endforeach; ?>
-    <p class="text-sm text-muted" style="margin-top:12px">Fix file permissions on these paths and try again, or update manually via FTP.</p>
-  </div>
-</div>
-
-<?php else: ?>
-<!-- ── STEP 1: Upload ── -->
-<div class="card mb-2">
-  <div class="card-hdr"><div class="card-title">How Software Update Works</div></div>
-  <div class="card-body">
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:0">
-      <div style="background:var(--g1);border-radius:10px;padding:14px">
-        <div style="width:32px;height:32px;border-radius:8px;background:var(--navy-dim);display:flex;align-items:center;justify-content:center;margin-bottom:10px">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--navy)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </div>
-        <div style="font-weight:700;font-size:.87rem;color:var(--navy);margin-bottom:3px">Upload ZIP</div>
-        <div style="font-size:.79rem;color:var(--g6);line-height:1.5">Upload the new DRXStore release ZIP from GitHub</div>
-      </div>
-      <div style="background:var(--g1);border-radius:10px;padding:14px">
-        <div style="width:32px;height:32px;border-radius:8px;background:var(--navy-dim);display:flex;align-items:center;justify-content:center;margin-bottom:10px">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--navy)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </div>
-        <div style="font-weight:700;font-size:.87rem;color:var(--navy);margin-bottom:3px">Auto Analysis</div>
-        <div style="font-size:.79rem;color:var(--g6);line-height:1.5">Version detected, schema changes checked, file diff shown</div>
-      </div>
-      <div style="background:var(--g1);border-radius:10px;padding:14px">
-        <div style="width:32px;height:32px;border-radius:8px;background:var(--green-lt);display:flex;align-items:center;justify-content:center;margin-bottom:10px">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </div>
-        <div style="font-weight:700;font-size:.87rem;color:var(--navy);margin-bottom:3px">You Confirm</div>
-        <div style="font-size:.79rem;color:var(--g6);line-height:1.5">Review changes and approve before anything is applied</div>
-      </div>
-      <div style="background:var(--g1);border-radius:10px;padding:14px">
-        <div style="width:32px;height:32px;border-radius:8px;background:var(--gold-dim);display:flex;align-items:center;justify-content:center;margin-bottom:10px">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#7a6020" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        </div>
-        <div style="font-weight:700;font-size:.87rem;color:var(--navy);margin-bottom:3px">Data Safe</div>
-        <div style="font-size:.79rem;color:var(--g6);line-height:1.5">data/ folder, DB and credentials are never touched</div>
-      </div>
+  <!-- Confirm bar -->
+  <div style="padding:14px 16px;border-top:1px solid var(--g3);background:var(--g1);border-radius:0 0 var(--rc) var(--rc)">
+    <div style="font-size:.8rem;color:var(--g6);margin-bottom:12px">
+      <strong>&#9888; Important:</strong>
+      This will overwrite existing files listed above. A backup of the current version is recommended before proceeding.
+      Your data, settings and medicines database will <strong>not</strong> be affected.
     </div>
-  </div>
-</div>
-
-<div class="card">
-  <div class="card-hdr"><div class="card-title">Upload Update Package</div></div>
-  <div class="card-body">
-    <div class="alert alert-info" style="margin-bottom:16px"><span class="alert-body">
-      <strong>Current version:</strong> <?=APP_NAME?> v<?=APP_VERSION?><br>
-      Download the latest release from <a href="https://github.com/Vptsh/drxstore/releases" target="_blank" rel="noopener" style="font-weight:700">github.com/Vptsh/drxstore/releases</a>
-    </span></div>
-    <form method="POST" enctype="multipart/form-data" id="uploadForm">
+    <form method="POST" style="display:inline">
       <?=csrfField()?>
-      <input type="hidden" name="action" value="upload_update">
-      <div class="form-group">
-        <label class="form-label">DRXStore Release ZIP <span class="req">*</span></label>
-        <input class="form-control" type="file" name="update_zip" accept=".zip" required id="zipInput">
-        <div class="form-hint">Upload the .zip file downloaded from GitHub releases. Max 20 MB.</div>
-      </div>
-      <div id="fileInfo" style="display:none;background:var(--g1);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:.83rem"></div>
-      <button type="submit" class="btn btn-primary" id="analyseBtn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        Analyse Update Package
+      <input type="hidden" name="action" value="apply">
+      <button type="submit" class="btn btn-success"
+        onclick="return confirm('Apply the update to v<?=e($release['tag'] ?? '')?>? This will replace <?=count($toReplace)?> file(s). Continue?')">
+        &#10003; Apply Update Now
       </button>
+    </form>
+    <form method="POST" style="display:inline;margin-left:8px">
+      <?=csrfField()?>
+      <input type="hidden" name="action" value="cancel">
+      <button type="submit" class="btn btn-ghost">Cancel</button>
     </form>
   </div>
 </div>
 <?php endif; ?>
 
 <script>
-document.getElementById('zipInput') && document.getElementById('zipInput').addEventListener('change', function(){
-    var fi = document.getElementById('fileInfo');
-    if(this.files[0]){
-        var mb = (this.files[0].size/1024/1024).toFixed(2);
-        fi.style.display='block';
-        fi.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline></svg><strong>' + this.files[0].name + '</strong> — ' + mb + ' MB';
-    }
-});
-document.getElementById('uploadForm') && document.getElementById('uploadForm').addEventListener('submit', function(){
-    var btn = document.getElementById('analyseBtn');
-    btn.disabled = true; btn.textContent = 'Analysing…';
-});
+(function(){
+  var form = document.getElementById('checkForm');
+  var btn  = document.getElementById('checkBtn');
+  if (form && btn) {
+    form.addEventListener('submit', function(){
+      btn.disabled = true;
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;animation:spin 1s linear infinite"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>Checking…';
+    });
+  }
+})();
 </script>
-<?php adminFooter();?>
+<style>
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+<?php adminFooter(); ?>

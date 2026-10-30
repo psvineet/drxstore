@@ -1,7 +1,7 @@
 <?php
 if (!defined('ROOT')) define('ROOT', dirname(dirname(dirname(__FILE__))));
 /**
- * DRXStore - Batches/Stock | Developed by Vineet | psvineet@zohomail.in
+ * DRXStore - Batches/Stock | Developed by Vineet | ci.vps@proton.me
  */
 require_once ROOT.'/config/app.php'; require_once ROOT.'/views/layout_admin.php'; requireStaff();
 $medMap=[]; foreach($db->table('medicines') as $m) $medMap[$m['id']]=$m;
@@ -34,7 +34,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         header('Location: index.php?p=batches');exit;
     }
 }
-if(get('action')==='delete'&&getInt('id')){$db->delete('batches',fn($b)=>$b['id']===getInt('id'));setFlash('success','Batch deleted.');header('Location: index.php?p=batches');exit;}
+if(get('action')==='delete'&&getInt('id')){ verifyCsrfGet(); $db->delete('batches',fn($b)=>$b['id']===getInt('id'));setFlash('success','Batch deleted.');header('Location: index.php?p=batches');exit;}
 
 $batches=$db->table('batches'); usort($batches,fn($a,$b)=>($b['id']??0)<=>($a['id']??0));
 $q=get('q'); $fst=get('status'); $fmid=getInt('filter_med');
@@ -92,7 +92,7 @@ adminHeader('Batches & Stock','batches');
         <td class="text-sm text-muted"><?=e($sup['name']??'—')?></td>
         <td><div class="flex gap-1">
           <a href="index.php?p=batches&action=edit&id=<?=$b['id']?>" class="btn btn-ghost btn-sm">Edit</a>
-          <a href="index.php?p=batches&action=delete&id=<?=$b['id']?>" class="btn btn-danger btn-sm" data-confirm="Delete?">Delete</a>
+          <a href="<?=csrfUrl('index.php?p=batches&action=delete&id='.$b['id'])?>" class="btn btn-danger btn-sm" data-confirm="Delete?">Delete</a>
         </div></td>
       </tr>
       <?php endforeach;?>

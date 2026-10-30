@@ -10,7 +10,10 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     if(!$name)$errors[]='Full name required.';
     if(!$email||!filter_var($email,FILTER_VALIDATE_EMAIL))$errors[]='Valid email required.';
     if(!$phone)$errors[]='Phone required.';
-    if(strlen($pw)<6)$errors[]='Password min 6 characters.';
+    // SECURITY (L2): Minimum 8 chars + digit or special char
+    $minLen=defined('MIN_PASSWORD_LENGTH')?MIN_PASSWORD_LENGTH:8;
+    if(strlen($pw)<$minLen)$errors[]='Password must be at least '.$minLen.' characters.';
+    elseif(!preg_match('/[0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/',$pw))$errors[]='Password must contain at least one number or special character.';
     if($pw!==$conf)$errors[]='Passwords do not match.';
     if($email&&$db->findOne('customers',fn($c)=>strtolower($c['email']??'')===strtolower($email)))$errors[]='Email already registered.';
     if(empty($errors)){
@@ -51,7 +54,7 @@ $cfg=getSettings();
     <div class="form-group"><label class="form-label">Full Name <span class="req">*</span></label><input class="form-control" type="text" name="name" value="<?=e(post('name'))?>" required autofocus></div>
     <div class="form-group"><label class="form-label">Email Address <span class="req">*</span></label><input class="form-control" type="email" name="email" value="<?=e(post('email'))?>" required><div class="form-hint">A verification link will be sent to this email.</div></div>
     <div class="form-group"><label class="form-label">Phone <span class="req">*</span></label><input class="form-control" type="tel" name="phone" value="<?=e(post('phone'))?>" required></div>
-    <div class="form-group"><label class="form-label">Password <span class="req">*</span></label><input class="form-control" type="password" name="password" required placeholder="Min 6 characters"></div>
+    <div class="form-group"><label class="form-label">Password <span class="req">*</span></label><input class="form-control" type="password" name="password" required placeholder="Min 8 chars, include number/symbol"></div>
     <div class="form-group" style="margin-bottom:18px"><label class="form-label">Confirm Password <span class="req">*</span></label><input class="form-control" type="password" name="confirm" required></div>
     <button type="submit" class="btn btn-block btn-lg" style="background:#7b2d8b;color:#fff">Create Account</button>
   </form>

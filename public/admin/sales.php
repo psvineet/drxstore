@@ -121,7 +121,7 @@ adminHeader('New Sale / POS','sales');
 <!-- Cart -->
 <div style="position:sticky;top:60px">
 <div class="card"><div class="card-hdr"><div class="card-title">Cart</div>
-  <?php if(!empty($_SESSION['cart'])):?><a href="index.php?p=cart_clear" class="btn btn-ghost btn-sm" style="color:var(--red)" data-confirm="Clear cart?">Clear</a><?php endif;?>
+  <?php if(!empty($_SESSION['cart'])):?><a href="<?=csrfUrl('index.php?p=cart_clear')?>" class="btn btn-ghost btn-sm" style="color:var(--red)" data-confirm="Clear cart?">Clear</a><?php endif;?>
 </div>
 <?php if(empty($_SESSION['cart'])):?>
   <div class="empty-state" style="padding:30px"><p>Cart is empty</p></div>

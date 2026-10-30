@@ -1,7 +1,7 @@
 <?php
 /**
  * DRXStore v4 - Admin Layout
- * Developed by Vineet | psvineet@zohomail.in
+ * Developed by Vineet | ci.vps@proton.me
  */
 
 // SVG icon library - all inline, no emoji, no font icons

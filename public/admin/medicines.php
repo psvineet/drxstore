@@ -51,52 +51,88 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     // ── IMPORT ────────────────────────────────────────────────────
     if ($act === 'import_preview' && isset($_FILES['import_file'])) {
         $f = $_FILES['import_file'];
-        if ($f['error'] !== UPLOAD_ERR_OK) { $errors[] = 'Upload failed (code '.$f['error'].').'; }
-        else {
+        $uploadMessages=[UPLOAD_ERR_INI_SIZE=>'File exceeds server upload limit.',UPLOAD_ERR_FORM_SIZE=>'File exceeds form size limit.',UPLOAD_ERR_PARTIAL=>'File only partially uploaded.',UPLOAD_ERR_NO_FILE=>'No file was uploaded.',UPLOAD_ERR_NO_TMP_DIR=>'Missing temp folder on server.',UPLOAD_ERR_CANT_WRITE=>'Failed to write file to disk.',UPLOAD_ERR_EXTENSION=>'A PHP extension blocked the upload.'];
+        if ($f['error'] !== UPLOAD_ERR_OK) {
+            $errors[] = 'Upload failed: ' . ($uploadMessages[$f['error']] ?? 'Error code '.$f['error'].'.');
+        } elseif ($f['size'] > 5 * 1024 * 1024) {
+            $errors[] = 'File too large (max 5 MB).';
+        } else {
             $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
-            if ($ext === 'csv' || $ext === 'txt') {
-                $importPreview = parseCsvMedicines($f['tmp_name']);
-            } elseif ($ext === 'xlsx' || $ext === 'xls') {
-                $importPreview = parseXlsxMedicines($f['tmp_name']);
-            } else {
-                $errors[] = 'Only CSV or XLSX files are accepted.';
+            try {
+                if ($ext === 'csv' || $ext === 'txt') {
+                    $importPreview = parseCsvMedicines($f['tmp_name']);
+                } elseif ($ext === 'xlsx' || $ext === 'xls') {
+                    if (!class_exists('ZipArchive')) {
+                        $errors[] = 'XLSX import requires the PHP zip extension (not installed on this server). Please upload a CSV file instead.';
+                    } else {
+                        $importPreview = parseXlsxMedicines($f['tmp_name']);
+                    }
+                } else {
+                    $errors[] = 'Invalid file format. Only .csv or .xlsx files are accepted.';
+                }
+            } catch (Throwable $ex) {
+                $errors[] = 'Could not parse file: ' . $ex->getMessage();
             }
-            if (empty($importPreview) && empty($errors)) { $errors[] = 'No valid rows found. Check column headers: name, generic, company, category, hsn, gst, rack'; }
-            if (!empty($importPreview)) { $_SESSION['med_import'] = $importPreview; }
+            if (empty($importPreview) && empty($errors)) {
+                $errors[] = 'No valid medicine rows found. Ensure the file has a header row with at least a "name" column and one data row.';
+            }
+            if (!empty($importPreview)) {
+                // Collect any GST warnings from rows, strip _gst_warn before storing
+                $gstWarns=[];
+                foreach($importPreview as &$pr){ if(isset($pr['_gst_warn'])){ $gstWarns[]=$pr['_gst_warn']; unset($pr['_gst_warn']); } }
+                unset($pr);
+                startSession();
+                $_SESSION['med_import'] = $importPreview;
+                if(!empty($gstWarns)) $_SESSION['med_import_warns']=$gstWarns;
+            }
         }
     }
 
-    if ($act === 'import_confirm' && !empty($_SESSION['med_import'])) {
-        $rows = $_SESSION['med_import']; $imp = 0; $dup = 0;
-        foreach ($rows as $r) {
-            if ($db->findOne('medicines',fn($m)=>strtolower($m['name']??'')===strtolower($r['name']))) { $dup++; continue; }
-            // Handle custom category
-            if (!empty($r['category']) && !in_array($r['category'], $cats)) {
-                if (!$db->findOne('categories',fn($c)=>strtolower($c['name'])===strtolower($r['category']))) {
-                    $db->insert('categories',['name'=>$r['category'],'type'=>'custom']);
+    if ($act === 'import_confirm') {
+        startSession();
+        if (!empty($_SESSION['med_import'])) {
+            $rows = $_SESSION['med_import']; $imp = 0; $dup = 0; $errs = [];
+            foreach ($rows as $r) {
+                try {
+                    if ($db->findOne('medicines',fn($m)=>strtolower(trim($m['name']??''))===strtolower(trim($r['name'])))) { $dup++; continue; }
+                    // Handle custom category
+                    if (!empty($r['category']) && !in_array($r['category'], $cats)) {
+                        if (!$db->findOne('categories',fn($c)=>strtolower($c['name'])===strtolower($r['category']))) {
+                            $db->insert('categories',['name'=>$r['category'],'type'=>'custom']);
+                            $cats[] = $r['category'];
+                        }
+                    }
+                    $db->insert('medicines',['name'=>trim($r['name']),'generic_name'=>trim($r['generic']),'company'=>trim($r['company']),'category'=>trim($r['category']),'hsn_code'=>trim($r['hsn']),'gst_percent'=>(float)($r['gst']??12),'rack_location'=>trim($r['rack']),'created_at'=>date('Y-m-d H:i:s')]);
+                    $imp++;
+                } catch (Throwable $ex) {
+                    $errs[] = 'Row "'.e($r['name']??'?').'": '.$ex->getMessage();
                 }
             }
-            $db->insert('medicines',['name'=>$r['name'],'generic_name'=>$r['generic'],'company'=>$r['company'],'category'=>$r['category'],'hsn_code'=>$r['hsn'],'gst_percent'=>$r['gst'],'rack_location'=>$r['rack'],'created_at'=>date('Y-m-d H:i:s')]);
-            $imp++;
+            unset($_SESSION['med_import'], $_SESSION['med_import_warns']);
+            if (!empty($errs)) {
+                setFlash('warning',"Import finished with issues: {$imp} added, {$dup} skipped. Errors: ".implode('; ', array_slice($errs,0,3)));
+            } else {
+                setFlash('success',"Import complete: {$imp} medicine(s) added, {$dup} duplicate(s) skipped.");
+            }
+            header('Location: index.php?p=medicines'); exit;
         }
-        unset($_SESSION['med_import']);
-        setFlash('success',"Import complete: {$imp} added, {$dup} duplicates skipped.");
-        header('Location: index.php?p=medicines'); exit;
     }
-    if ($act === 'import_cancel') { unset($_SESSION['med_import']); header('Location: index.php?p=medicines'); exit; }
+    if ($act === 'import_cancel') { startSession(); unset($_SESSION['med_import'],$_SESSION['med_import_warns']); header('Location: index.php?p=medicines'); exit; }
 
-    // Download sample CSV
-    if ($act === 'sample_csv') {
-        header('Content-Type: text/csv');
-        header('Content-Disposition: attachment; filename="medicines_sample.csv"');
-        echo "name,generic,company,category,hsn,gst,rack\n";
-        $rows=[['Paracetamol 500mg','Acetaminophen','Sun Pharma','Tablet','30049099','12','A-1'],['Amoxicillin 250mg','Amoxicillin','Cipla','Capsule','30041099','12','B-3'],['Omeprazole 20mg','Omeprazole','Mankind','Capsule','30049099','12','C-2']];
-        foreach($rows as $r) echo implode(',', $r)."\n";
-        exit;
-    }
+}
+
+// Sample CSV download (GET, no CSRF needed — read-only)
+if (get('action')==='sample_csv_dl') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="medicines_sample.csv"');
+    echo "name,generic,company,category,hsn,gst,rack\r\n";
+    $sampleRows=[['Paracetamol 500mg','Acetaminophen','Sun Pharma','Tablet','30049099','12','A-1'],['Amoxicillin 250mg','Amoxicillin','Cipla','Capsule','30041099','12','B-3'],['Omeprazole 20mg','Omeprazole','Mankind','Capsule','30049099','12','C-2']];
+    foreach($sampleRows as $sr) echo implode(',', $sr)."\r\n";
+    exit;
 }
 
 if (get('action')==='delete'&&getInt('id')) {
+    verifyCsrfGet();
     $mid=getInt('id');
     if($db->count('batches',fn($b)=>($b['medicine_id']??0)===$mid)){setFlash('danger','Cannot delete — has batches.');}
     else{$db->delete('medicines',fn($m)=>$m['id']===$mid);setFlash('success','Deleted.');}
@@ -127,21 +163,46 @@ if ($db instanceof MySQLDB) {
 }
 
 $edit=null; if(get('action')==='edit'&&getInt('id'))$edit=$db->findOne('medicines',fn($m)=>$m['id']===getInt('id'));
+startSession();
 if(!empty($_SESSION['med_import'])&&empty($importPreview))$importPreview=$_SESSION['med_import'];
 
 // ── Helper: parse CSV ─────────────────────────────────────────────
 function parseCsvMedicines(string $path): array {
-    $rows=[]; $handle=fopen($path,'r'); if(!$handle)return[];
-    $header=fgetcsv($handle); if(!$header)return[];
+    $rows=[]; $importErrors=[];
+    // Read entire file, strip UTF-8 BOM (Excel adds \xEF\xBB\xBF), normalise line endings
+    $raw = file_get_contents($path);
+    if ($raw === false) return [];
+    if (str_starts_with($raw, "\xEF\xBB\xBF")) $raw = substr($raw, 3);
+    $raw = str_replace(["\r\n", "\r"], "\n", trim($raw));
+    if ($raw === '') return [];
+    $tmp = tempnam(sys_get_temp_dir(), 'drxmed_');
+    file_put_contents($tmp, $raw);
+    $handle = fopen($tmp, 'r');
+    if (!$handle) { @unlink($tmp); return []; }
+    $header=fgetcsv($handle); if(!$header){ fclose($handle); @unlink($tmp); return []; }
     $header=array_map(fn($h)=>strtolower(trim($h??'')),$header);
+    // Validate required header column exists
+    $hasName = in_array('name',$header)||in_array('medicine_name',$header)||in_array('medicine',$header);
+    if(!$hasName){ fclose($handle); @unlink($tmp); return []; }
+    $rowNum=1;
     while(($row=fgetcsv($handle))!==false){
-        if(count($row)<2)continue;
+        $rowNum++;
+        if(implode('',$row)==='')continue; // skip blank rows
         $m=[]; foreach($header as $i=>$col)$m[$col]=trim($row[$i]??'');
-        $name=$m['name']??$m['medicine_name']??$m['medicine']??($row[0]??'');
-        if(!trim($name))continue;
-        $rows[]=['name'=>trim($name),'generic'=>trim($m['generic']??$m['generic_name']??''),'company'=>trim($m['company']??$m['manufacturer']??''),'category'=>trim($m['category']??$m['dosage_form']??''),'hsn'=>trim($m['hsn']??$m['hsn_code']??''),'gst'=>is_numeric($g=$m['gst']??$m['gst_percent']??'12')?(float)$g:12,'rack'=>trim($m['rack']??$m['rack_location']??'')];
+        $name=$m['name']??$m['medicine_name']??$m['medicine']??'';
+        if(trim($name)==='')continue;
+        // GST validation: must be numeric 0-28 or default 12
+        $gstRaw=$m['gst']??$m['gst_percent']??$m['gst%']??'';
+        if($gstRaw!==''&&!is_numeric($gstRaw)){
+            // reject row with bad GST format — use error marker so caller can report
+            $rows[]=['name'=>trim($name),'generic'=>trim($m['generic']??$m['generic_name']??''),'company'=>trim($m['company']??$m['manufacturer']??''),'category'=>trim($m['category']??$m['dosage_form']??''),'hsn'=>trim($m['hsn']??$m['hsn_code']??''),'gst'=>12,'rack'=>trim($m['rack']??$m['rack_location']??''),'_gst_warn'=>"Row {$rowNum}: GST '".htmlspecialchars($gstRaw,ENT_QUOTES)."' not numeric, defaulted to 12%"];
+            continue;
+        }
+        $gst=$gstRaw===''?12:(float)$gstRaw;
+        $gst=max(0,min(28,$gst)); // clamp to valid GST slab range (0–28%)
+        $rows[]=['name'=>trim($name),'generic'=>trim($m['generic']??$m['generic_name']??''),'company'=>trim($m['company']??$m['manufacturer']??''),'category'=>trim($m['category']??$m['dosage_form']??''),'hsn'=>trim($m['hsn']??$m['hsn_code']??''),'gst'=>$gst,'rack'=>trim($m['rack']??$m['rack_location']??'')];
     }
-    fclose($handle); return $rows;
+    fclose($handle); @unlink($tmp); return $rows;
 }
 
 // ── Helper: parse XLSX (basic, no external library) ───────────────
@@ -309,33 +370,62 @@ $cats=array_column($db->table('categories'),'name'); sort($cats);
 </div>
 
 <!-- ── Inline Import Panel ── -->
-<div id="importPanel" style="display:none;margin-bottom:16px">
+<div id="importPanel" style="display:<?=!empty($importPreview)?'block':'none'?>;margin-bottom:16px">
 <div class="card">
   <div class="card-hdr"><div class="card-title">Import Medicines from CSV or XLSX</div><button type="button" class="btn btn-ghost btn-sm" onclick="toggleImport()">Close</button></div>
   <div class="card-body">
+    <?php
+    // Show GST warnings if any
+    if(!empty($_SESSION['med_import_warns'])):
+        foreach($_SESSION['med_import_warns'] as $w): ?>
+    <div class="alert alert-warning" style="margin-bottom:8px"><span class="alert-body">&#9888; <?=e($w)?></span></div>
+    <?php endforeach;
+    unset($_SESSION['med_import_warns']);
+    endif; ?>
     <?php if(empty($importPreview)):?>
     <form method="POST" enctype="multipart/form-data">
       <?=csrfField()?><input type="hidden" name="action" value="import_preview">
-      <div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;flex-wrap:wrap">
         <div class="form-group" style="margin:0"><label class="form-label">Select File (CSV or XLSX) <span class="req">*</span></label><input class="form-control" type="file" name="import_file" accept=".csv,.xlsx,.xls,.txt" required></div>
-        <button type="submit" class="btn btn-primary">Preview</button>
-        <form method="POST" style="margin:0"><?=csrfField()?><input type="hidden" name="action" value="sample_csv"><button type="submit" class="btn btn-ghost">Download Sample CSV</button></form>
+        <button type="submit" class="btn btn-primary">&#128269; Preview</button>
       </div>
-      <div class="form-hint" style="margin-top:8px">Columns: <strong>name</strong>, generic, company, category, hsn, gst (%), rack. First row must be headers.</div>
+      <div class="form-hint" style="margin-top:8px">
+        Columns: <strong>name</strong>, generic, company, category, hsn, gst (%), rack. First row must be headers.
+        &nbsp;&mdash;&nbsp;<a href="index.php?p=medicines&action=sample_csv_dl" style="font-size:.8rem">&#8595; Download Sample CSV</a>
+      </div>
     </form>
     <?php else:?>
-    <div style="margin-bottom:12px"><strong><?=count($importPreview)?></strong> rows ready. Duplicates will be skipped automatically.</div>
+    <div style="margin-bottom:12px"><strong><?=count($importPreview)?></strong> medicine(s) ready to import. Exact duplicates (by name) will be skipped.</div>
     <div class="table-wrap" style="max-height:260px;overflow-y:auto"><table class="tbl">
-      <thead><tr><th>Name</th><th>Generic</th><th>Company</th><th>Form</th><th>GST%</th></tr></thead>
+      <thead><tr><th>#</th><th>Name</th><th>Generic</th><th>Company</th><th>Form</th><th>GST%</th><th>Rack</th></tr></thead>
       <tbody>
-      <?php foreach(array_slice($importPreview,0,50) as $r):?>
-      <tr><td class="fw-600"><?=e($r['name'])?></td><td><?=e($r['generic']?:'&mdash;')?></td><td><?=e($r['company']?:'&mdash;')?></td><td><?=e($r['category']?:'&mdash;')?></td><td><?=e($r['gst'])?>%</td></tr>
-      <?php endforeach; if(count($importPreview)>50):?><tr><td colspan="5" class="tc text-muted text-sm">...and <?=count($importPreview)-50?> more</td></tr><?php endif;?>
+      <?php foreach(array_slice($importPreview,0,50) as $ri=>$r):?>
+      <tr>
+        <td class="text-muted text-sm"><?=$ri+1?></td>
+        <td class="fw-600"><?=e($r['name'])?></td>
+        <td class="text-sm"><?=e($r['generic']?:'&mdash;')?></td>
+        <td class="text-sm"><?=e($r['company']?:'&mdash;')?></td>
+        <td><?=e($r['category']?:'&mdash;')?></td>
+        <td class="text-sm"><?=e($r['gst'])?>%</td>
+        <td class="text-sm"><?=e($r['rack']?:'&mdash;')?></td>
+      </tr>
+      <?php endforeach; if(count($importPreview)>50):?><tr><td colspan="7" class="tc text-muted text-sm">...and <?=count($importPreview)-50?> more rows (all will be imported)</td></tr><?php endif;?>
       </tbody>
     </table></div>
-    <div class="flex gap-2" style="margin-top:12px">
-      <form method="POST"><?=csrfField()?><input type="hidden" name="action" value="import_confirm"><button type="submit" class="btn btn-success">Confirm Import (<?=count($importPreview)?> medicines)</button></form>
-      <form method="POST"><?=csrfField()?><input type="hidden" name="action" value="import_cancel"><button type="submit" class="btn btn-ghost">Cancel</button></form>
+    <div class="flex gap-2" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--g3)">
+      <form method="POST">
+        <?=csrfField()?>
+        <input type="hidden" name="action" value="import_confirm">
+        <button type="submit" class="btn btn-success" onclick="return confirm('Import <?=count($importPreview)?> medicine(s) into the database?')">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><polyline points="20 6 9 17 4 12"/></svg>
+          Confirm &amp; Import (<?=count($importPreview)?> medicines)
+        </button>
+      </form>
+      <form method="POST">
+        <?=csrfField()?>
+        <input type="hidden" name="action" value="import_cancel">
+        <button type="submit" class="btn btn-ghost">Discard &amp; Start Over</button>
+      </form>
     </div>
     <?php endif;?>
   </div>
@@ -379,7 +469,7 @@ $cats=array_column($db->table('categories'),'name'); sort($cats);
         <td><?=stockChip($stock)?></td>
         <td><div class="flex gap-1">
           <a href="index.php?p=medicines&action=edit&id=<?=$m['id']?>" class="btn btn-ghost btn-sm">Edit</a>
-          <a href="index.php?p=medicines&action=delete&id=<?=$m['id']?>" class="btn btn-danger btn-sm" data-confirm="Delete &quot;<?=e($m['name'])?>?">Delete</a>
+          <a href="<?=csrfUrl('index.php?p=medicines&action=delete&id='.$m['id'])?>" class="btn btn-danger btn-sm" data-confirm="Delete &quot;<?=e($m['name'])?>?">Delete</a>
         </div></td>
       </tr>
       <?php endforeach;?>
@@ -430,7 +520,7 @@ $cats=array_column($db->table('categories'),'name'); sort($cats);
     </form></div>
 </div>
 <?php if($edit||!empty($errors)):?><script>openModal('mModal');</script><?php endif;?>
-<?php if(!empty($importPreview)||isset($_POST['action'])&&$_POST['action']==='import_preview'):?><script>document.addEventListener('DOMContentLoaded',function(){toggleImport();});</script><?php endif;?>
+<?php /* importPanel display is now PHP-controlled (display:block when preview exists) */ ?>
 
 <script>
 function toggleExportMenu(){

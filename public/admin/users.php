@@ -26,12 +26,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $uname = post('username');
         $email = post('email');
         $pw    = post('password');
-        $role  = post('role','staff');
+        $role  = in_array(post('role'), ['admin','staff']) ? post('role') : 'staff';
+
+        // SECURITY (C3): Only an admin can assign the 'admin' role.
+        // A staff user reaching this page (if access control were bypassed) must not
+        // be able to promote themselves or others to admin.
+        $currentUserRole = $_SESSION['admin_role'] ?? '';
+        if ($role === 'admin' && $currentUserRole !== 'admin') {
+            $role = 'staff'; // silently downgrade to staff
+        }
 
         if (!$name)  $errors[] = 'Name required.';
         if (!$email) $errors[] = 'Email required.';
         if ($act === 'add_staff' && !$pw) $errors[] = 'Password required.';
-        if ($pw && strlen($pw) < 6) $errors[] = 'Password min 6 characters.';
+        // SECURITY (L2): Minimum password length 8; require digit or special char
+        $minLen = defined('MIN_PASSWORD_LENGTH') ? MIN_PASSWORD_LENGTH : 8;
+        if ($pw && strlen($pw) < $minLen) $errors[] = 'Password must be at least '.$minLen.' characters.';
+        if ($pw && !preg_match('/[0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/', $pw)) $errors[] = 'Password must contain at least one number or special character.';
         if ($email && $db->findOne('users', fn($u) => strtolower($u['email']??'') === strtolower($email) && ($u['id']??0) != $id))
             $errors[] = 'Email already in use.';
 
@@ -104,7 +115,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$sup_id) $errors[] = 'Select a supplier.';
         if (!$uname)  $errors[] = 'Username required.';
         if ($act === 'add_sup' && !$pw) $errors[] = 'Password required.';
-        if ($pw && strlen($pw) < 6)     $errors[] = 'Password min 6 characters.';
+        // SECURITY (L2): Minimum password length 8; require digit or special char
+        $minLen = defined('MIN_PASSWORD_LENGTH') ? MIN_PASSWORD_LENGTH : 8;
+        if ($pw && strlen($pw) < $minLen)     $errors[] = 'Password must be at least '.$minLen.' characters.';
+        if ($pw && !preg_match('/[0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/', $pw)) $errors[] = 'Password must contain at least one number or special character.';
 
         if (empty($errors)) {
             $d = ['supplier_id'=>$sup_id,'username'=>$uname,'email'=>$email,'active'=>(int)$active];
@@ -135,7 +149,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$name)  $errors[] = 'Name required.';
         if (!$phone) $errors[] = 'Phone required.';
-        if ($pw && strlen($pw) < 6) $errors[] = 'Password min 6 characters.';
+        // SECURITY (L2): Minimum password length 8; require digit or special char
+        $minLen = defined('MIN_PASSWORD_LENGTH') ? MIN_PASSWORD_LENGTH : 8;
+        if ($pw && strlen($pw) < $minLen) $errors[] = 'Password must be at least '.$minLen.' characters.';
+        if ($pw && !preg_match('/[0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/', $pw)) $errors[] = 'Password must contain at least one number or special character.';
 
         if (empty($errors)) {
             $d = ['name'=>$name,'phone'=>$phone,'email'=>$email,'active'=>(int)$active,'verified'=>(int)$verified,'updated_at'=>date('Y-m-d H:i:s')];
@@ -148,9 +165,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// ── GET actions ──────────────────────────────
+// ── GET actions (SECURITY M4: all destructive GET actions require a CSRF token) ──
 // Toggle staff active
 if (get('action') === 'toggle_staff' && getInt('id')) {
+    verifyCsrfGet();
     $uid = getInt('id');
     if ($uid !== (int)$_SESSION['admin_id']) {
         $u = $db->findOne('users', fn($u) => $u['id'] === $uid);
@@ -168,6 +186,7 @@ if (get('action') === 'toggle_staff' && getInt('id')) {
 }
 // Delete staff (never delete yourself or last admin)
 if (get('action') === 'del_staff' && getInt('id')) {
+    verifyCsrfGet();
     $uid = getInt('id');
     if ($uid !== (int)$_SESSION['admin_id']) {
         $u = $db->findOne('users', fn($u) => $u['id'] === $uid);
@@ -182,22 +201,26 @@ if (get('action') === 'del_staff' && getInt('id')) {
 }
 // Toggle/delete supplier user
 if (get('action') === 'toggle_sup' && getInt('id')) {
+    verifyCsrfGet();
     $sid = getInt('id');
     $su = $db->findOne('supplier_users', fn($u) => $u['id'] === $sid);
     if ($su) $db->update('supplier_users', fn($u) => $u['id'] === $sid, ['active' => !($su['active']??true)]);
     setFlash('success', 'Status updated.'); header('Location: index.php?p=users&tab=suppliers'); exit;
 }
 if (get('action') === 'del_sup' && getInt('id')) {
+    verifyCsrfGet();
     $db->delete('supplier_users', fn($u) => $u['id'] === getInt('id'));
     setFlash('success', 'Deleted.'); header('Location: index.php?p=users&tab=suppliers'); exit;
 }
 // Toggle/delete patient
 if (get('action') === 'toggle_patient' && getInt('id')) {
+    verifyCsrfGet();
     $cid = getInt('id'); $cu = $db->findOne('customers', fn($c) => $c['id'] === $cid);
     if ($cu) $db->update('customers', fn($c) => $c['id'] === $cid, ['active' => !($cu['active']??true)]);
     setFlash('success', 'Status updated.'); header('Location: index.php?p=users&tab=patients'); exit;
 }
 if (get('action') === 'del_patient' && getInt('id')) {
+    verifyCsrfGet();
     $db->delete('customers', fn($c) => $c['id'] === getInt('id'));
     setFlash('success', 'Deleted.'); header('Location: index.php?p=users&tab=patients'); exit;
 }
@@ -257,8 +280,8 @@ adminHeader('Users & Accounts', 'users');
         <div class="flex gap-1" style="flex-wrap:nowrap">
           <a href="index.php?p=users&action=edit_staff&id=<?=$u['id']?>&tab=staff" class="btn btn-ghost btn-sm">Edit</a>
           <?php if(!$isMe): ?>
-          <a href="index.php?p=users&action=toggle_staff&id=<?=$u['id']?>" class="btn btn-ghost btn-sm" style="min-width:62px;text-align:center"><?=($u['active']??true)?'Disable':'Enable'?></a>
-          <a href="index.php?p=users&action=del_staff&id=<?=$u['id']?>" class="btn btn-danger btn-sm" data-confirm="Delete &quot;<?=e($u['name'])?>?&quot;">Delete</a>
+          <a href="<?=csrfUrl('index.php?p=users&action=toggle_staff&id='.$u['id'])?>" class="btn btn-ghost btn-sm" style="min-width:62px;text-align:center"><?=($u['active']??true)?'Disable':'Enable'?></a>
+          <a href="<?=csrfUrl('index.php?p=users&action=del_staff&id='.$u['id'])?>" class="btn btn-danger btn-sm" data-confirm="Delete &quot;<?=e($u['name'])?>?&quot;">Delete</a>
           <?php endif; ?>
         </div>
       </td>
@@ -288,8 +311,8 @@ adminHeader('Users & Accounts', 'users');
       <td>
         <div class="flex gap-1" style="flex-wrap:nowrap">
           <a href="index.php?p=users&action=edit_sup&id=<?=$su['id']?>&tab=suppliers" class="btn btn-ghost btn-sm">Edit</a>
-          <a href="index.php?p=users&action=toggle_sup&id=<?=$su['id']?>" class="btn btn-ghost btn-sm" style="min-width:62px;text-align:center"><?=($su['active']??true)?'Disable':'Enable'?></a>
-          <a href="index.php?p=users&action=del_sup&id=<?=$su['id']?>" class="btn btn-danger btn-sm" data-confirm="Delete this supplier login?">Delete</a>
+          <a href="<?=csrfUrl('index.php?p=users&action=toggle_sup&id='.$su['id'])?>" class="btn btn-ghost btn-sm" style="min-width:62px;text-align:center"><?=($su['active']??true)?'Disable':'Enable'?></a>
+          <a href="<?=csrfUrl('index.php?p=users&action=del_sup&id='.$su['id'])?>" class="btn btn-danger btn-sm" data-confirm="Delete this supplier login?">Delete</a>
         </div>
       </td>
     </tr>
@@ -319,8 +342,8 @@ adminHeader('Users & Accounts', 'users');
       <td>
         <div class="flex gap-1" style="flex-wrap:nowrap">
           <a href="index.php?p=users&action=edit_patient&id=<?=$pt['id']?>&tab=patients" class="btn btn-ghost btn-sm">Edit</a>
-          <a href="index.php?p=users&action=toggle_patient&id=<?=$pt['id']?>" class="btn btn-ghost btn-sm" style="min-width:62px;text-align:center"><?=($pt['active']??true)?'Disable':'Enable'?></a>
-          <a href="index.php?p=users&action=del_patient&id=<?=$pt['id']?>" class="btn btn-danger btn-sm" data-confirm="Delete patient &quot;<?=e($pt['name'])?>?&quot;">Delete</a>
+          <a href="<?=csrfUrl('index.php?p=users&action=toggle_patient&id='.$pt['id'])?>" class="btn btn-ghost btn-sm" style="min-width:62px;text-align:center"><?=($pt['active']??true)?'Disable':'Enable'?></a>
+          <a href="<?=csrfUrl('index.php?p=users&action=del_patient&id='.$pt['id'])?>" class="btn btn-danger btn-sm" data-confirm="Delete patient &quot;<?=e($pt['name'])?>?&quot;">Delete</a>
         </div>
       </td>
     </tr>
@@ -356,7 +379,7 @@ adminHeader('Users & Accounts', 'users');
       </div>
     </div>
     <div class="form-group"><label class="form-label">Password <?=$editStaff?'(leave blank to keep)':'<span class="req">*</span>'?></label>
-      <input class="form-control" type="password" name="password" placeholder="<?=$editStaff?'Leave blank to keep current':'Min 6 characters'?>" <?=$editStaff?'':'required'?>>
+      <input class="form-control" type="password" name="password" placeholder="<?=$editStaff?'Leave blank to keep current':'Min 8 chars, include a number or symbol'?>" <?=$editStaff?'':'required'?>>
     </div>
     <?php if(!$editStaff):?><div class="alert alert-info"><span class="alert-body"><strong>Staff</strong> can access: Sales, Batches, Medicines, Customers, Expiry &amp; Returns.<br><strong>Admin</strong> has full access to all sections.</span></div><?php endif;?>
   </div>
