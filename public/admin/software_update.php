@@ -457,6 +457,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 rmdirRecursive(UPDATE_TMP_DIR);
                 unset($_SESSION['sw_analysis'], $_SESSION['sw_release']);
 
+                // Patch APP_VERSION in config/app.php.
+                // config/ is intentionally skipped during file copy (user secrets),
+                // so the version constant must be updated here explicitly.
+                $newVersion = ltrim($release['tag'], 'v');
+                $cfgFile    = ROOT . '/config/app.php';
+                if (file_exists($cfgFile) && is_writable($cfgFile)) {
+                    $cfgSrc     = file_get_contents($cfgFile);
+                    $cfgPatched = preg_replace(
+                        "/define\s*\(\s*'APP_VERSION'\s*,\s*'[^']+'\s*\)/",
+                        "define('APP_VERSION', '" . preg_quote($newVersion, '/') . "')",
+                        $cfgSrc
+                    );
+                    if ($cfgPatched && $cfgPatched !== $cfgSrc) {
+                        file_put_contents($cfgFile, $cfgPatched);
+                    }
+                }
+
                 if (empty($applyResult['errors'])) {
                     setFlash('success', 'Update to v' . $release['tag'] . ' applied successfully! ' . $applyResult['applied'] . ' file(s) updated.');
                 } else {

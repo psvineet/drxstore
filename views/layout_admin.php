@@ -128,14 +128,20 @@ function adminHeader(string $title, string $activePage = ''): void {
     echo '<nav class="sidebar" id="sidebar">' . "\n";
     echo '<div class="sb-head"><div class="sb-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></div><div><div class="sb-title">' . $storeE . '</div><div class="sb-portal">Admin Portal</div></div></div>' . "\n";
 
+    $isAdminRole = (($_SESSION['admin_role'] ?? '') === 'admin');
+
     echo '<div class="sb-section">Overview</div><ul class="sb-nav">';
     echo _navItem('dashboard','Dashboard','grid',$activePage);
     echo '</ul><div class="sb-section">Inventory</div><ul class="sb-nav">';
     echo _navItem('medicines','Medicines','pill',$activePage);
     echo _navItem('batches','Batches &amp; Stock','box',$activePage,$nAlt);
-    echo _navItem('adjust','Stock Adjustment','sliders',$activePage);
-    $nMsg = (int)$db->count('supplier_messages', fn($m) => ($m['status']??'') === 'unread');
-    echo _navItem('suppliers','Suppliers','building',$activePage,$nMsg);
+    if ($isAdminRole) {
+        echo _navItem('adjust','Stock Adjustment','sliders',$activePage);
+    }
+    if ($isAdminRole) {
+        $nMsg = (int)$db->count('supplier_messages', fn($m) => ($m['status']??'') === 'unread');
+        echo _navItem('suppliers','Suppliers','building',$activePage,$nMsg);
+    }
     echo _navItem('purchase','Purchase Orders','truck',$activePage);
     echo '</ul><div class="sb-section">Sales</div><ul class="sb-nav">';
     echo _navItem('sales','New Sale / POS','pos',$activePage);
@@ -145,17 +151,22 @@ function adminHeader(string $title, string $activePage = ''): void {
     echo _navItem('returns','Returns','return',$activePage,$nPendingRet);
     $nPMsg = (int)$db->count('patient_messages', fn($m) => ($m['direction']??'in') === 'in' && !($m['is_read']??false));
     echo _navItem('patient_messages','Patient Messages','mail',$activePage,$nPMsg);
-    echo _navItem('discounts','Discounts','tag',$activePage);
+    if ($isAdminRole) {
+        echo _navItem('discounts','Discounts','tag',$activePage);
+    }
     echo '</ul><div class="sb-section">Finance</div><ul class="sb-nav">';
-    echo _navItem('ledger','Ledger','book',$activePage);
-    echo _navItem('reports','Analytics','chart',$activePage);
+    if ($isAdminRole) {
+        echo _navItem('ledger','Ledger','book',$activePage);
+    }
+    if ($isAdminRole) {
+        echo _navItem('reports','Analytics','chart',$activePage);
+    }
     echo _navItem('expiry','Expiry Report','clock',$activePage,$nExp);
     echo '</ul><div class="sb-section">Administration</div><ul class="sb-nav">';
-    if (($_SESSION['admin_role']??'') === 'admin') {
+    if ($isAdminRole) {
         echo _navItem('users','User Management','user',$activePage);
-    }
-    if (($_SESSION['admin_role']??'') === 'admin') {
         echo _navItem('settings','Settings','gear',$activePage);
+        echo _navItem('sw_update','Software Update','update',$activePage);
     }
     echo _navItem('logout','Sign Out','logout','');
     echo '</ul>';

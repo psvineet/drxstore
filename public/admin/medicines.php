@@ -249,19 +249,21 @@ if (get('action') === 'export_csv') {
     usort($allMeds, fn($a,$b) => strcasecmp($a['name'], $b['name']));
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="medicines_export_'.date('Ymd').'.csv"');
-    echo "ï»¿"; // UTF-8 BOM for Excel
+    // Correct UTF-8 BOM (3 raw bytes) so Excel opens without mojibake
+    echo "\xEF\xBB\xBF";
     $fp = fopen('php://output', 'w');
+    // Headers match the import template column order exactly
     fputcsv($fp, ['name','generic','company','category','hsn','gst','rack','description']);
     foreach($allMeds as $m) {
         fputcsv($fp, [
-            $m['name'] ?? '',
-            $m['generic_name'] ?? '',
-            $m['company'] ?? '',
-            $m['category'] ?? '',
-            $m['hsn_code'] ?? '',
-            $m['gst_percent'] ?? 12,
+            $m['name']          ?? '',
+            $m['generic_name']  ?? '',
+            $m['company']       ?? '',
+            $m['category']      ?? '',
+            $m['hsn_code']      ?? '',
+            isset($m['gst_percent']) ? (float)$m['gst_percent'] : 12,
             $m['rack_location'] ?? '',
-            $m['description'] ?? '',
+            $m['description']   ?? '',
         ]);
     }
     fclose($fp);
@@ -304,18 +306,54 @@ if (get('action') === 'export_xlsx') {
         if (!isset($strIdx[$val])) { $strIdx[$val] = count($strings); $strings[] = $val; }
         return $strIdx[$val];
     };
-    $sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+    // styles.xml — 2 cell styles: 0 = normal, 1 = bold header with light-blue fill
+    $zip->addFromString('xl/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        . '<fonts count="2">'
+        .   '<font><sz val="11"/><name val="Calibri"/></font>'                   // 0 normal
+        .   '<font><b/><sz val="11"/><name val="Calibri"/></font>'               // 1 bold
+        . '</fonts>'
+        . '<fills count="3">'
+        .   '<fill><patternFill patternType="none"/></fill>'
+        .   '<fill><patternFill patternType="gray125"/></fill>'
+        .   '<fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/></patternFill></fill>'  // 2 blue header fill
+        . '</fills>'
+        . '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+        . '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        . '<cellXfs count="2">'
+        .   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'    // style 0: normal
+        .   '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' // style 1: bold + blue
+        . '</cellXfs>'
+        . '</styleSheet>');
+
+    // Build sheet XML: header row uses style 1 (bold+fill), data rows use style 0
+    $sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        . '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+        . '<cols>'
+        .   '<col min="1" max="1" width="28" customWidth="1"/>'   // Name
+        .   '<col min="2" max="2" width="24" customWidth="1"/>'   // Generic
+        .   '<col min="3" max="3" width="20" customWidth="1"/>'   // Company
+        .   '<col min="4" max="4" width="16" customWidth="1"/>'   // Category
+        .   '<col min="5" max="5" width="14" customWidth="1"/>'   // HSN
+        .   '<col min="6" max="6" width="8"  customWidth="1"/>'   // GST
+        .   '<col min="7" max="7" width="14" customWidth="1"/>'   // Rack
+        .   '<col min="8" max="8" width="36" customWidth="1"/>'   // Description
+        . '</cols>'
+        . '<sheetData>';
     $cols = ['A','B','C','D','E','F','G','H'];
     foreach($rows as $ri => $row) {
-        $sheetXml .= '<row r="'.($ri+1).'">';
+        $isHeader = ($ri === 0);
+        $styleAttr = $isHeader ? ' s="1"' : '';
+        $sheetXml .= '<row r="'.($ri+1).'"' . ($isHeader ? ' customHeight="1" ht="18"' : '') . '>';
         foreach($row as $ci => $cell) {
             $col = $cols[$ci] ?? chr(65+$ci);
             $ref = $col.($ri+1);
-            if(is_numeric($cell) && !str_starts_with((string)$cell, '0')) {
-                $sheetXml .= '<c r="'.$ref.'" t="n"><v>'.htmlspecialchars((string)$cell,ENT_XML1).'</v></c>';
+            if (!$isHeader && is_numeric($cell) && !str_starts_with((string)$cell, '0')) {
+                $sheetXml .= '<c r="'.$ref.'" t="n"'.$styleAttr.'><v>'.htmlspecialchars((string)$cell,ENT_XML1).'</v></c>';
             } else {
                 $idx = $getIdx($cell);
-                $sheetXml .= '<c r="'.$ref.'" t="s"><v>'.$idx.'</v></c>';
+                $sheetXml .= '<c r="'.$ref.'" t="s"'.$styleAttr.'><v>'.$idx.'</v></c>';
             }
         }
         $sheetXml .= '</row>';
@@ -324,11 +362,9 @@ if (get('action') === 'export_xlsx') {
     $zip->addFromString('xl/worksheets/sheet1.xml', $sheetXml);
     // sharedStrings.xml
     $ssXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'.count($strings).'" uniqueCount="'.count($strings).'">';
-    foreach($strings as $s) $ssXml .= '<si><t>'.htmlspecialchars($s,ENT_XML1).'</t></si>';
+    foreach($strings as $s) $ssXml .= '<si><t xml:space="preserve">'.htmlspecialchars($s,ENT_XML1).'</t></si>';
     $ssXml .= '</sst>';
     $zip->addFromString('xl/sharedStrings.xml', $ssXml);
-    // styles.xml (minimal)
-    $zip->addFromString('xl/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>');
     $zip->close();
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="medicines_export_'.date('Ymd').'.xlsx"');
