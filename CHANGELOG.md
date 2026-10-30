@@ -168,7 +168,7 @@ The `'active'` column was also removed from the insert statement in both `import
 
 ### Acknowledgements
 
-Security issues in 3.0.0 were reported by **Anil Kumar Voleti** [LinkedIn](https://www.linkedin.com/in/voleti-anil/)). The issues were disclosed responsibly, coordinated through a GitHub Security Advisory, and independently verified by the reporter against the patched build. Thank you.
+Security issues in 3.0.0 were reported by **Anil Kumar Voleti** ([LinkedIn](https://www.linkedin.com/in/voleti-anil/)). The issues were disclosed responsibly, coordinated through a GitHub Security Advisory, and independently verified by the reporter against the patched build. Thank you.
 
 ---
 
