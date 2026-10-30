@@ -44,7 +44,7 @@ Anil identified two critical vulnerabilities in DRXStore 2.0.0 through independe
 | C1 | Critical | Broken authorization — `requireAdmin()` checked session existence but not role, granting staff users access to all admin-only pages; combined with `users.php` accepting the `role` field from POST without restriction, a staff user could escalate to admin |
 | C2 | Critical | Remote code execution — software updater accepted an arbitrary uploaded ZIP with no file-type restriction or signature verification; an uploaded PHP file could be requested over HTTP and executed |
 
-**CVE:** Pending — to be assigned on publication of the GitHub Security Advisory.
+**CVE: Pending (Tracked via https://github.com/psvineet/drxstore/security/advisories/GHSA-7xhx-j29g-xgx4)
 **CVSS:** 8.8 — `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H`
 **CWE:** CWE-863 (Incorrect Authorization), CWE-434 (Unrestricted Upload of File with Dangerous Type)
 
