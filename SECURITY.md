@@ -35,7 +35,6 @@ We follow a **90-day disclosure window** from the date of first contact.
 ### 3.0.0 — October 2026
 
 **Reported by:** Anil Kumar Voleti
-**Contact:** voletianilkumar3@gmail.com
 **Profile:** https://www.linkedin.com/in/voleti-anil/
 
 Anil identified two critical vulnerabilities in DRXStore 2.0.0 through independent research on a local installation. He reported them directly and privately before any public disclosure, coordinated the timeline, and offered independent verification of the patch — which he carried out against the v3.0.0 build before release.
