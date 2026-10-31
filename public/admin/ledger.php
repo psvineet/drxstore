@@ -78,9 +78,9 @@ $net=$tCr-$tDb;
 // ── Exports ──
 if(get('export')==='csv'){
     header('Content-Type: text/csv');
-    header('Content-Disposition: attachment; filename="DRXStore_Ledger_'.date('Y-m-d').'.csv"');
+    header('Content-Disposition: attachment; filename="'.APP_NAME.'_Ledger_'.date('Y-m-d').'.csv"');
     $fp=fopen('php://output','w');
-    fputcsv($fp,['DRXStore Account Ledger — '.storeName()]);
+    fputcsv($fp,[APP_NAME.' Account Ledger — '.storeName()]);
     fputcsv($fp,['Export Date',date('d M Y H:i')]);
     fputcsv($fp,['Period',$fd?:'-','to',$td,'Type',$ftype]);
     fputcsv($fp,[]);
@@ -92,8 +92,8 @@ if(get('export')==='csv'){
 }
 if(get('export')==='excel'){
     header('Content-Type: application/vnd.ms-excel');
-    header('Content-Disposition: attachment; filename="DRXStore_Ledger_'.date('Y-m-d').'.xls"');
-    echo "DRXStore Ledger\nExport\t".date('d M Y H:i')."\n\nDate\tRef\tType\tParty\tNote\tDebit\tCredit\n";
+    header('Content-Disposition: attachment; filename="'.APP_NAME.'_Ledger_'.date('Y-m-d').'.xls"');
+    echo APP_NAME." Ledger\nExport\t".date('d M Y H:i')."\n\nDate\tRef\tType\tParty\tNote\tDebit\tCredit\n";
     foreach($entries as $e) echo dateF($e['date'])."\t".$e['ref']."\t".ucfirst($e['type'])."\t".$e['party']."\t".$e['note']."\t".($e['debit']>0?number_format($e['debit'],2):'')."\t".($e['credit']>0?number_format($e['credit'],2):'')."\n";
     echo "\t\t\t\tTOTALS\t".number_format($tDb,2)."\t".number_format($tCr,2)."\n\t\t\t\tNET\t".number_format($net,2)."\n";
     exit;

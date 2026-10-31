@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to DRXStore are documented here.
+All notable changes to Pharmiq are documented here. Pharmiq is based on DRXStore 3.0.1 (see [NOTICE](NOTICE)); entries up to 3.0.1 come from that project.
 
 ---
 

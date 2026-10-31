@@ -25,11 +25,11 @@ function sqlOrPhp(MySQLDB|JsonDB $db, string $sql, array $bind, callable $phpFal
 
 // ── CSV Export ──
 if (get('export') === 'csv') {
-    $fname = 'DRXStore_Analytics_' . date('Y-m-d') . '.csv';
+    $fname = APP_NAME . '_Analytics_' . date('Y-m-d') . '.csv';
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="' . $fname . '"');
     $fp = fopen('php://output', 'w');
-    fputcsv($fp, ['DRXStore Analytics Export — ' . storeName()]);
+    fputcsv($fp, [APP_NAME . ' Analytics Export — ' . storeName()]);
     fputcsv($fp, ['Export Date: ' . date('d M Y H:i:s')]);
     fputcsv($fp, []);
     fputcsv($fp, ['=== MONTHLY SUMMARY ===']);
@@ -60,10 +60,10 @@ if (get('export') === 'csv') {
 
 // ── Excel Export ──
 if (get('export') === 'excel') {
-    $fname = 'DRXStore_Analytics_' . date('Y-m-d') . '.xls';
+    $fname = APP_NAME . '_Analytics_' . date('Y-m-d') . '.xls';
     header('Content-Type: application/vnd.ms-excel');
     header('Content-Disposition: attachment; filename="' . $fname . '"');
-    echo "DRXStore Analytics — " . storeName() . "\nExport Date\t" . date('d M Y H:i') . "\n\n=== MONTHLY SUMMARY ===\nMonth\tSales\tRevenue\tGST\tDiscount\n";
+    echo APP_NAME . " Analytics — " . storeName() . "\nExport Date\t" . date('d M Y H:i') . "\n\n=== MONTHLY SUMMARY ===\nMonth\tSales\tRevenue\tGST\tDiscount\n";
     if ($db instanceof MySQLDB) {
         $rows=$db->pdo()->query("SELECT DATE_FORMAT(sale_date,'%Y-%m') m,COUNT(*) cnt,SUM(grand_total) rev,SUM(gst_amount) gst,SUM(discount_amount) disc FROM sales GROUP BY m ORDER BY m DESC LIMIT 12")->fetchAll();
         foreach($rows as $r) echo date('M Y',strtotime($r['m'].'-01'))."\t".$r['cnt']."\t".number_format($r['rev'],2)."\t".number_format($r['gst'],2)."\t".number_format($r['disc'],2)."\n";

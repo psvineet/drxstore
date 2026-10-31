@@ -65,7 +65,6 @@ $cfg=getSettings(); $store=storeName();
   <?php endif;?>
   <div class="auth-divider" style="margin-top:14px">already verified?</div>
   <a href="index.php?p=cust_login" class="btn btn-ghost btn-block">Sign In</a>
-  <div class="auth-footer">Developed with &#x1FAC0; by <strong>Vineet</strong></div>
 </div></div>
 <script src="<?=assetUrl('assets/js/app.js')?>"></script>
 </body></html>

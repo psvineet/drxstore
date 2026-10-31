@@ -1,6 +1,4 @@
-# DRXStore v3.0.1 — Complete Pharmacy Management System
-
-**Developed by Vineet | ci.vps@proton.me**
+# Pharmiq v3.0.1 — Complete Pharmacy Management System
 
 > Version 3.0.1 is a security-hardened release. All 19 reported issues have been resolved. Upgrading from 2.0.0 is strongly recommended.
 
@@ -8,8 +6,8 @@
 
 ## Quick Start (Termux / XAMPP / Any PHP Server)
 
-1. Extract `drxstore/` to your web root
-2. Open browser → `http://localhost/drxstore/`
+1. Extract `pharmiq/` to your web root
+2. Open browser → `http://localhost/pharmiq/`
 3. The **Setup Wizard** launches automatically on first run
 4. Complete 4 steps: Store Info → Admin Account → Storage → Confirm
 5. Login with your credentials
@@ -78,7 +76,7 @@
 ## Project Structure
 
 ```
-drxstore/
+pharmiq/
 ├── index.php               ← Router (all pages via ?p=pagename)
 ├── config/app.php          ← Bootstrap & constants
 ├── helpers/
@@ -115,17 +113,28 @@ Key protections in this release:
 - AES-256-GCM encryption for stored SMTP credentials
 - Rate limiting and account lockout on all login forms
 - Session regeneration on login; idle timeout after 2 hours
-- Software updater downloads only from `github.com/psvineet/drxstore` via the GitHub API — no user-uploaded ZIP is accepted
+- Software updater downloads only from `github.com/jeet-sorathiya/Pharmiq` via the GitHub API — no user-uploaded ZIP is accepted
 - Security headers (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy) on every admin response
 - Minimum password complexity enforced on all seven password forms
 
 ---
 
-## Contact
+## Releasing an Update
 
-**Developer:** Vineet
-**Email:** ci.vps@proton.me
+Installed copies check `github.com/jeet-sorathiya/Pharmiq` for the latest GitHub release.
+
+1. Bump `APP_VERSION` in `config/app.php`
+2. Tag the commit with a higher version (e.g. `v3.1.0`) and publish a GitHub release for it
+3. Download the tag's source ZIP (`https://github.com/jeet-sorathiya/Pharmiq/archive/refs/tags/v3.1.0.zip`) and attach its SHA-256 as a `.sha256` asset on the release — updates are refused without it
 
 ---
 
-*DRXStore v3.0.1 — Built with care by Vineet*
+## Contact
+
+Issues and support: https://github.com/jeet-sorathiya/Pharmiq/issues
+
+---
+
+## License
+
+GPL-3.0 — see [LICENSE](LICENSE). Pharmiq is a modified version of DRXStore; see [NOTICE](NOTICE) for copyright and modification details.

@@ -31,14 +31,14 @@ if ($_isFirstVisit) {
     $_proto   = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $_base    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
     $_setupUrl = $_proto . '://' . $_SERVER['HTTP_HOST'] . $_base . '?p=setup&token=' . urlencode($_storedToken);
-    error_log('[DRXStore] First-time setup URL (one-time): ' . $_setupUrl);
+    error_log('[' . APP_NAME . '] First-time setup URL (one-time): ' . $_setupUrl);
     header('Location: ' . $_setupUrl);
     exit;
 }
 
 if (!hash_equals($_storedToken, (string)$_givenToken)) {
     http_response_code(403);
-    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>403 Forbidden — DRXStore</title>
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>403 Forbidden — ' . APP_NAME . '</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f8fafc;display:flex;
     align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px}
@@ -194,7 +194,7 @@ $currency_sym = $s['currency'] ?? '&#8377;';
           <div class="form-group"><label class="form-label">Port</label><input class="form-control" type="number" name="mysql_port" id="mport" value="<?=e($s['mysql']['mp']??3306)?>"></div>
         </div>
         <div class="form-row-2">
-          <div class="form-group"><label class="form-label">Database Name <span class="req">*</span></label><input class="form-control" type="text" name="mysql_name" id="mname" value="<?=e($s['mysql']['mn']??'drxstore')?>" placeholder="drxstore"><div class="form-hint">Will be created automatically if it does not exist.</div></div>
+          <div class="form-group"><label class="form-label">Database Name <span class="req">*</span></label><input class="form-control" type="text" name="mysql_name" id="mname" value="<?=e($s['mysql']['mn']??'pharmiq')?>" placeholder="pharmiq"><div class="form-hint">Will be created automatically if it does not exist.</div></div>
           <div class="form-group"><label class="form-label">Username</label><input class="form-control" type="text" name="mysql_user" id="muser" value="<?=e($s['mysql']['mu']??'root')?>"></div>
         </div>
         <div class="form-row-2">

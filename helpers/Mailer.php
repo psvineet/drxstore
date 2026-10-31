@@ -50,7 +50,7 @@ class Mailer {
         $from = $this->cfg['from'] ?? ADMIN_EMAIL;
         $name = $this->cfg['name'] ?? APP_NAME;
         $headers  = "MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n";
-        $headers .= "From: {$name} <{$from}>\r\nReply-To: {$from}\r\nX-Mailer: DRXStore\r\n";
+        $headers .= "From: {$name} <{$from}>\r\nReply-To: {$from}\r\nX-Mailer: " . APP_NAME . "\r\n";
         return @mail($to, $subject, $body, $headers);
     }
 
@@ -75,7 +75,7 @@ class Mailer {
 
         $socket = @fsockopen($host_str, $port, $errno, $errstr, $timeout);
         if (!$socket) {
-            error_log("DRXStore SMTP: Cannot connect to {$host}:{$port} - {$errstr}");
+            error_log(APP_NAME . " SMTP: Cannot connect to {$host}:{$port} - {$errstr}");
             // Fallback to mail()
             return $this->sendMail($to, $subject, $htmlBody);
         }
@@ -117,7 +117,7 @@ class Mailer {
 
             if (strpos($authR, '235') === false) {
                 fclose($socket);
-                error_log("DRXStore SMTP AUTH failed: {$authR}");
+                error_log(APP_NAME . " SMTP AUTH failed: {$authR}");
                 return $this->sendMail($to, $subject, $htmlBody);
             }
 
@@ -138,7 +138,7 @@ class Mailer {
             $headers .= "Subject: =?UTF-8?B?" . base64_encode($subject) . "?=\r\n";
             $headers .= "MIME-Version: 1.0\r\n";
             $headers .= "Content-Type: multipart/alternative; boundary=\"{$boundary}\"\r\n";
-            $headers .= "X-Mailer: DRXStore/" . APP_VERSION . "\r\n";
+            $headers .= "X-Mailer: " . APP_NAME . "/" . APP_VERSION . "\r\n";
             $headers .= "Date: " . date('r') . "\r\n";
 
             $body = "--{$boundary}\r\n";
@@ -164,15 +164,15 @@ class Mailer {
 
         } catch (Exception $e) {
             if (is_resource($socket)) fclose($socket);
-            error_log("DRXStore SMTP error: " . $e->getMessage());
+            error_log(APP_NAME . " SMTP error: " . $e->getMessage());
             return $this->sendMail($to, $subject, $htmlBody);
         }
     }
 
     public static function test(string $to, array $config): array {
         $mailer = new self($config);
-        $body   = mailTemplate('Test Email', '<p>This is a test email from DRXStore. If you received this, your SMTP settings are working correctly.</p><p><strong>Sent at:</strong> ' . date('d M Y, h:i A') . '</p>');
-        $ok     = $mailer->send($to, 'DRXStore SMTP Test', $body);
+        $body   = mailTemplate('Test Email', '<p>This is a test email from ' . APP_NAME . '. If you received this, your SMTP settings are working correctly.</p><p><strong>Sent at:</strong> ' . date('d M Y, h:i A') . '</p>');
+        $ok     = $mailer->send($to, APP_NAME . ' SMTP Test', $body);
         return ['success' => $ok, 'message' => $ok ? 'Test email sent successfully!' : 'Failed to send. Check SMTP credentials.'];
     }
 }

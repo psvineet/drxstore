@@ -40,6 +40,5 @@ $cfg=getSettings();
   </form>
   <div class="auth-divider" style="margin-top:16px">other portals</div>
   <div class="flex gap-2 justify-center flex-wrap"><a href="index.php?p=login" class="btn btn-ghost btn-sm">Admin</a><a href="index.php?p=cust_login" class="btn btn-ghost btn-sm">Patient</a></div>
-  <div class="auth-footer">Developed with &#x1FAC0; by <strong>Vineet</strong></div>
 </div></div>
 <script src="<?= assetUrl('assets/js/app.js') ?>"></script></body></html>

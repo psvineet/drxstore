@@ -13,9 +13,9 @@ $good   =array_values(array_filter($all,fn($b)=>($b['expiry_date']??'')>$d90&&($
 // ── CSV Export ──
 if(get('export')==='csv'){
     header('Content-Type: text/csv');
-    header('Content-Disposition: attachment; filename="DRXStore_ExpiryReport_'.date('Y-m-d').'.csv"');
+    header('Content-Disposition: attachment; filename="'.APP_NAME.'_ExpiryReport_'.date('Y-m-d').'.csv"');
     $fp=fopen('php://output','w');
-    fputcsv($fp,['DRXStore Expiry Report — '.storeName()]);
+    fputcsv($fp,[APP_NAME.' Expiry Report — '.storeName()]);
     fputcsv($fp,['Export Date: '.date('d M Y H:i:s')]);
     fputcsv($fp,[]);
     foreach(['Expired'=>$expired,'Expiring within 30 days'=>$exp30,'Expiring 31-90 days'=>$exp90,'Good (>90 days)'=>$good] as $lbl=>$rows){
@@ -39,8 +39,8 @@ if(get('export')==='csv'){
 // ── Excel Export ──
 if(get('export')==='excel'){
     header('Content-Type: application/vnd.ms-excel');
-    header('Content-Disposition: attachment; filename="DRXStore_ExpiryReport_'.date('Y-m-d').'.xls"');
-    echo "DRXStore Expiry Report — ".storeName()."\n";
+    header('Content-Disposition: attachment; filename="'.APP_NAME.'_ExpiryReport_'.date('Y-m-d').'.xls"');
+    echo APP_NAME." Expiry Report — ".storeName()."\n";
     echo "Export Date: ".date('d M Y H:i:s')."\n\n";
     foreach(['Expired'=>$expired,'Expiring within 30 days'=>$exp30,'Expiring 31-90 days'=>$exp90,'Good (>90 days)'=>$good] as $lbl=>$rows){
         if(empty($rows)) continue;

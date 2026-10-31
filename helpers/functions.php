@@ -43,7 +43,7 @@ function money($v): string { return currencySymbol() . number_format((float)($v 
 function dateF(string $d): string { return $d ? date('d M Y', strtotime($d)) : '&mdash;'; }
 function dateTimeF(string $d): string { return $d ? date('d M Y, h:i A', strtotime($d)) : '&mdash;'; }
 function daysLeft(string $exp): int { return $exp ? (int)ceil((strtotime($exp) - time()) / 86400) : 0; }
-function invNo(int $id): string { return 'DRX-' . date('Y') . '-' . str_pad($id, 5, '0', STR_PAD_LEFT); }
+function invNo(int $id): string { return 'PHQ-' . date('Y') . '-' . str_pad($id, 5, '0', STR_PAD_LEFT); }
 function poNo(int $id): string  { return 'PO-' . str_pad($id, 5, '0', STR_PAD_LEFT); }
 
 function expiryChip(string $exp): string {
@@ -270,7 +270,7 @@ code{background:#f1f3f6;padding:2px 6px;border-radius:4px;font-family:monospace}
 <div class="wrap">
   <div class="hdr"><h1>{$store}</h1><p>{$title}</p></div>
   <div class="body">{$body}</div>
-  <div class="footer">Developed with &#x1FAC0; by <strong>Vineet</strong> &nbsp;&bull;&nbsp; &copy; {$year} {$store}</div>
+  <div class="footer">&copy; {$year} {$store}</div>
 </div></body></html>
 HTML;
 }
@@ -380,7 +380,7 @@ function sendStockAlertEmails(): void {
         $html .= '</ul>';
     }
 
-    $body = mailTemplate('Daily Inventory Alert — ' . date('d M Y'), $html . '<p>Please review and take necessary action from your DRXStore admin panel.</p>');
+    $body = mailTemplate('Daily Inventory Alert — ' . date('d M Y'), $html . '<p>Please review and take necessary action from your ' . APP_NAME . ' admin panel.</p>');
     sendMail($to, 'Inventory Alert — ' . $store . ' — ' . date('d M Y'), $body);
 
     // Mark as sent for today

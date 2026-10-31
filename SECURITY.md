@@ -13,7 +13,7 @@
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Open a [GitHub Security Advisory](https://github.com/psvineet/drxstore/security/advisories/new) on this repository, or email **ci.vps@proton.me** with:
+Open a [GitHub Security Advisory](https://github.com/jeet-sorathiya/Pharmiq/security/advisories/new) on this repository with:
 
 - A clear description of the issue
 - Steps to reproduce
@@ -32,19 +32,21 @@ We follow a **90-day disclosure window** from the date of first contact.
 
 ## Disclosure History
 
+These issues were found and fixed in the upstream project (DRXStore, see [NOTICE](NOTICE)) before Pharmiq was created.
+
 ### 3.0.0 — October 2026
 
 **Reported by:** Anil Kumar Voleti
 **Profile:** https://www.linkedin.com/in/voleti-anil/
 
-Anil identified two critical vulnerabilities in DRXStore 2.0.0 through independent research on a local installation. He reported them directly and privately before any public disclosure, coordinated the timeline, and offered independent verification of the patch — which he carried out against the v3.0.0 tag after it was published.
+Anil identified two critical vulnerabilities in version 2.0.0 through independent research on a local installation. He reported them directly and privately before any public disclosure, coordinated the timeline, and offered independent verification of the patch — which he carried out against the v3.0.0 tag after it was published.
 
 | ID | Severity | Issue |
 |----|----------|-------|
 | C1 | Critical | Broken authorization — `requireAdmin()` checked session existence but not role, granting staff users access to all admin-only pages; combined with `users.php` accepting the `role` field from POST without restriction, a staff user could escalate to admin |
 | C2 | Critical | Remote code execution — software updater accepted an arbitrary uploaded ZIP with no file-type restriction or signature verification; an uploaded PHP file could be requested over HTTP and executed |
 
-**CVE: Pending (Tracked via https://github.com/psvineet/drxstore/security/advisories/GHSA-7xhx-j29g-xgx4)
+**CVE:** Pending (upstream advisory GHSA-7xhx-j29g-xgx4)
 **CVSS:** 8.8 — `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H`
 **CWE:** CWE-863 (Incorrect Authorization), CWE-434 (Unrestricted Upload of File with Dangerous Type)
 
@@ -60,7 +62,7 @@ All 19 issues are resolved in v3.0.0. Full fix details are in [CHANGELOG.md](CHA
 - SMTP password encrypted with AES-256-GCM at rest
 - Rate limiting and lockout on all login forms and the supplier contact form
 - `session_regenerate_id(true)` on login; idle timeout after 2 hours
-- Software updater fetches only from `github.com/psvineet/drxstore` via GitHub API — no user-uploaded archive accepted; executable file types blocked on extraction
+- Software updater fetches only from `github.com/jeet-sorathiya/Pharmiq` via GitHub API — no user-uploaded archive accepted; executable file types blocked on extraction
 - Security headers on every admin response (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy)
 - Minimum 8-character password with digit or special character enforced on all password forms
 - `nginx.conf.example` and PHP-level guards block direct HTTP access to `data/`, `config/`, `helpers/`, `views/`

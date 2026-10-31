@@ -4,10 +4,10 @@
  * Developed by Vineet
  */
 
-if (!defined('APP_NAME'))    define('APP_NAME',    'DRXStore');
+if (!defined('APP_NAME'))    define('APP_NAME',    'Pharmiq');
 if (!defined('APP_VERSION')) define('APP_VERSION', '3.0.1');
 if (!defined('APP_AUTHOR'))  define('APP_AUTHOR',  'Vineet');
-if (!defined('ADMIN_EMAIL')) define('ADMIN_EMAIL', 'ci.vps@proton.me');
+if (!defined('ADMIN_EMAIL')) define('ADMIN_EMAIL', ''); // fallback only; the store email from Settings is used
 
 if (!defined('ROOT'))     define('ROOT',     dirname(__DIR__));
 if (!defined('DATA_DIR')) define('DATA_DIR', ROOT . '/data');
@@ -55,7 +55,7 @@ require_once ROOT . '/helpers/attribution.php';
 function _drxFatalError(string $title, string $body, string $hint = ''): never {
     http_response_code(500);
     echo '<!DOCTYPE html><html><head><meta charset="utf-8">
-    <title>' . htmlspecialchars($title) . ' — DRXStore</title>
+    <title>' . htmlspecialchars($title) . ' — ' . APP_NAME . '</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <style>
       *{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;

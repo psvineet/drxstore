@@ -65,7 +65,6 @@ function portalHeader(string $title, string $type, string $activePage, array $na
     }
     echo '<li><a href="index.php?p=logout" data-confirm="Sign out?">' . _portalNavIcon('logout') . 'Sign Out</a></li>' . "\n";
     echo '</ul>';
-    echo '<div class="sb-foot">Developed with 🫀 by <strong>Vineet</strong></div>';
     echo '</nav>' . "\n";
 
     echo '<div class="main-content"><header class="topbar">';

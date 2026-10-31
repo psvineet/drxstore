@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# DRXStore — Nginx Configuration Example
+# Pharmiq — Nginx Configuration Example
 # SECURITY FIX: L4/L5 — Block direct access to sensitive directories
 #
 # This file is a REFERENCE ONLY. Copy/adapt the relevant blocks into your
@@ -12,7 +12,7 @@
 #
 # Usage (VPS / dedicated):
 #   Copy the relevant location blocks into your site config at
-#   /etc/nginx/sites-available/drxstore.conf  (or wherever your config lives)
+#   /etc/nginx/sites-available/pharmiq.conf  (or wherever your config lives)
 # ══════════════════════════════════════════════════════════════════════════════
 
 server {
@@ -29,7 +29,7 @@ server {
     listen [::]:443 ssl http2;
     server_name yourdomain.com www.yourdomain.com;
 
-    root /var/www/drxstore;   # ← Change to your actual web root
+    root /var/www/pharmiq;   # ← Change to your actual web root
     index index.php;
 
     # ── TLS (obtain cert with: certbot --nginx -d yourdomain.com) ─────────────
@@ -103,6 +103,6 @@ server {
     }
 
     # ── Logging ───────────────────────────────────────────────────────────────
-    access_log /var/log/nginx/drxstore_access.log;
-    error_log  /var/log/nginx/drxstore_error.log;
+    access_log /var/log/nginx/pharmiq_access.log;
+    error_log  /var/log/nginx/pharmiq_error.log;
 }

@@ -194,7 +194,7 @@ if(get('action')==='backup_mysql'){
 
         // ── Build a fully phpMyAdmin & mysqldump compatible SQL dump ──
         $lines = [];
-        $lines[] = "-- DRXStore MySQL Backup";
+        $lines[] = "-- ".APP_NAME." MySQL Backup";
         $lines[] = "-- Generated   : ".date('Y-m-d H:i:s');
         $lines[] = "-- Database    : {$dbName}";
         $lines[] = "-- App Version : ".APP_NAME." v".APP_VERSION;
@@ -267,10 +267,10 @@ if(get('action')==='backup_mysql'){
         $lines[] = "SET FOREIGN_KEY_CHECKS = 1;";
         $lines[] = "SET UNIQUE_CHECKS = 1;";
         $lines[] = "";
-        $lines[] = "-- DRXStore backup complete. Tables: ".count($tables).". Generated: ".date('Y-m-d H:i:s');
+        $lines[] = "-- ".APP_NAME." backup complete. Tables: ".count($tables).". Generated: ".date('Y-m-d H:i:s');
 
         $out = implode("\n", $lines);
-        $filename = 'drxstore_backup_'.$dbName.'_'.date('Ymd_His').'.sql';
+        $filename = strtolower(APP_NAME).'_backup_'.$dbName.'_'.date('Ymd_His').'.sql';
 
         if(ob_get_length()) ob_clean();
         header('Content-Type: application/octet-stream');
@@ -317,7 +317,7 @@ if($_SERVER['REQUEST_METHOD']==='POST' && post('action')==='restore_mysql'){
         setFlash('danger','SQL file is empty or too small to be a valid backup.');
         header('Location: index.php?p=settings'); exit;
     }
-    // Accept DRXStore backups OR any valid SQL file (e.g. phpMyAdmin exports)
+    // Accept our own backups OR any valid SQL file (e.g. phpMyAdmin exports)
     $looksLikeSql = (
         stripos($sqlContent, 'CREATE TABLE') !== false ||
         stripos($sqlContent, 'INSERT INTO')  !== false ||
@@ -702,7 +702,7 @@ adminHeader('Settings','settings');
         <form method="POST" enctype="multipart/form-data"><?=csrfField()?><input type="hidden" name="action" value="restore_mysql">
           <div class="form-group"><label class="form-label">Upload .sql File</label>
             <input class="form-control" type="file" name="sql_file" accept=".sql" required>
-            <div class="form-hint">Accepts DRXStore backups or phpMyAdmin exports.</div>
+            <div class="form-hint">Accepts <?=e(APP_NAME)?> backups or phpMyAdmin exports.</div>
           </div>
           <!-- SECURITY (M2): Admin must re-enter their password to execute restore -->
           <div class="form-group"><label class="form-label">Confirm Your Admin Password <span class="req">*</span></label>
@@ -731,7 +731,7 @@ adminHeader('Settings','settings');
             <div class="form-group"><label class="form-label">Port</label><input class="form-control" type="number" id="mig_port" value="3306"></div>
           </div>
           <div class="form-row-2">
-            <div class="form-group"><label class="form-label">Database Name <span class="req">*</span></label><input class="form-control" type="text" id="mig_name" placeholder="drxstore"></div>
+            <div class="form-group"><label class="form-label">Database Name <span class="req">*</span></label><input class="form-control" type="text" id="mig_name" placeholder="pharmiq"></div>
             <div class="form-group"><label class="form-label">Username</label><input class="form-control" type="text" id="mig_user" value="root"></div>
           </div>
           <div class="form-row-2">

@@ -1,0 +1,17 @@
+Pharmiq
+Copyright (C) 2026 Jeet Sorathiya
+
+Pharmiq is a modified version of DRXStore 3.0.1,
+Copyright (C) 2026 Vineet Pratap Singh.
+
+Modifications by Jeet Sorathiya, starting 2026-10-31:
+  - Renamed the product to Pharmiq
+  - Software updater now pulls releases from github.com/jeet-sorathiya/Pharmiq
+  - Removed the on-screen author credit; original copyright notices are kept
+    in the source files and in this file
+
+Both the original work and these modifications are licensed under the
+GNU General Public License v3.0. See the LICENSE file for the full terms.
+
+This program comes with ABSOLUTELY NO WARRANTY, to the extent permitted
+by applicable law. See sections 15 and 16 of the LICENSE.

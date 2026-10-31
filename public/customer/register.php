@@ -60,6 +60,5 @@ $cfg=getSettings();
   </form>
   <div class="auth-divider" style="margin-top:14px">already registered?</div>
   <a href="index.php?p=cust_login" class="btn btn-ghost btn-block">Sign In</a>
-  <div class="auth-footer mt-2">Developed with 🫀 by <strong>Vineet</strong></div>
 </div></div>
 <script src="<?php echo assetUrl('assets/js/app.js'); ?>"></script></body></html>

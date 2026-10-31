@@ -5,7 +5,7 @@
  *
  * SECURITY (C2) FIX: Removed manual ZIP upload. Updates are now downloaded
  * directly from the official GitHub Releases page:
- *   https://github.com/psvineet/drxstore/releases
+ *   https://github.com/jeet-sorathiya/Pharmiq/releases
  *
  * Flow:
  *   1. Admin clicks "Check for Updates"
@@ -18,7 +18,7 @@
  *
  * Security guarantees (replaces upload-based attack surface):
  *   - No user-supplied file accepted
- *   - Download source hard-coded to github.com/psvineet/drxstore only
+ *   - Download source hard-coded to github.com/<GITHUB_REPO> only
  *   - Redirects NOT followed (prevents redirect-based SSRF)
  *   - Path traversal protection: all entries validated against ROOT
  *   - New PHP files not in current install are blocked (prevents backdoor injection)
@@ -31,8 +31,9 @@ require_once ROOT.'/views/layout_admin.php';
 requireAdmin(true); // admin-only, not staff
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const GITHUB_API_URL  = 'https://api.github.com/repos/psvineet/drxstore/releases/latest';
-const GITHUB_REPO_URL = 'https://github.com/psvineet/drxstore/releases';
+const GITHUB_REPO     = 'jeet-sorathiya/Pharmiq'; // owner/repo that publishes releases
+const GITHUB_API_URL  = 'https://api.github.com/repos/' . GITHUB_REPO . '/releases/latest';
+const GITHUB_REPO_URL = 'https://github.com/' . GITHUB_REPO . '/releases';
 const GITHUB_HOST     = 'github.com';           // asset downloads only from this host
 const GITHUB_RAW_HOST = 'objects.githubusercontent.com'; // GitHub's CDN for release assets
 const GITHUB_API_HOST = 'api.github.com';       // zipball_url / tarball_url fallback
@@ -71,7 +72,7 @@ function fetchLatestRelease(): array {
     $ctx = stream_context_create([
         'http' => [
             'method'          => 'GET',
-            'header'          => "User-Agent: DRXStore-Updater/" . readInstalledVersion() . " (PHP)\r\n" .
+            'header'          => "User-Agent: " . APP_NAME . "-Updater/" . readInstalledVersion() . " (PHP)\r\n" .
                                  "Accept: application/vnd.github+json\r\n",
             'timeout'         => 15,
             'follow_location' => 0, // do NOT follow redirects (SSRF protection)
@@ -106,12 +107,12 @@ function fetchLatestRelease(): array {
 
     // Build the archive URL directly from the tag — always works for any GitHub release,
     // no attached assets required.
-    // e.g. https://github.com/psvineet/drxstore/archive/refs/tags/v2.0.0-production.zip
-    $zipUrl  = 'https://github.com/psvineet/drxstore/archive/refs/tags/' . rawurlencode($tag) . '.zip';
-    $zipName = 'drxstore-' . ltrim($tag, 'v') . '.zip';
+    // e.g. https://github.com/jeet-sorathiya/Pharmiq/archive/refs/tags/v3.1.0.zip
+    $zipUrl  = 'https://github.com/' . GITHUB_REPO . '/archive/refs/tags/' . rawurlencode($tag) . '.zip';
+    $zipName = 'pharmiq-' . ltrim($tag, 'v') . '.zip';
 
     // Look for a .sha256 checksum asset published alongside the release.
-    // Convention: asset named like "drxstore-2.0.0.zip.sha256" or "checksums.sha256"
+    // Convention: asset named like "pharmiq-3.1.0.zip.sha256" or "checksums.sha256"
     $sha256Url = '';
     foreach ($data['assets'] ?? [] as $asset) {
         $aName = strtolower($asset['name'] ?? '');
@@ -153,7 +154,7 @@ function downloadRelease(string $url, string $destFile): int {
         CURLOPT_FOLLOWLOCATION  => true,           // follow GitHub's redirects to CDN
         CURLOPT_MAXREDIRS       => 5,
         CURLOPT_TIMEOUT         => 120,
-        CURLOPT_USERAGENT       => 'DRXStore-Updater/' . readInstalledVersion() . ' (PHP/cURL)',
+        CURLOPT_USERAGENT       => APP_NAME . '-Updater/' . readInstalledVersion() . ' (PHP/cURL)',
         CURLOPT_SSL_VERIFYPEER  => true,
         CURLOPT_SSL_VERIFYHOST  => 2,
         // Validate each redirect host before following
@@ -395,7 +396,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Fetch the .sha256 file (plain text: "abc123...  filename.zip")
                 $shaCtx = stream_context_create(['http' => [
                     'method'  => 'GET',
-                    'header'  => 'User-Agent: DRXStore-Updater/' . readInstalledVersion() . " (PHP)\r\n",
+                    'header'  => 'User-Agent: ' . APP_NAME . '-Updater/' . readInstalledVersion() . " (PHP)\r\n",
                     'timeout' => 15,
                 ], 'ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
                 $shaRaw = @file_get_contents($release['sha256Url'], false, $shaCtx);
@@ -417,7 +418,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'Expected: ' . $expectedHash . ' | Got: ' . $actualHash
                     );
                 }
-                error_log('[DRXStore] Update ' . $release['tag'] . ' SHA256 verified OK: ' . $actualHash);
+                error_log('[' . APP_NAME . '] Update ' . $release['tag'] . ' SHA256 verified OK: ' . $actualHash);
 
                 // Extract
                 $files = extractUpdateZip($zipPath, UPDATE_TMP_DIR);
@@ -517,7 +518,7 @@ adminHeader('Software Update', 'sw_update');
 <div class="page-hdr">
   <div>
     <div class="page-title">&#128257; Software Update</div>
-    <div class="page-sub">Keep DRXStore up to date from the official GitHub release</div>
+    <div class="page-sub">Keep <?=e(APP_NAME)?> up to date from the official GitHub release</div>
   </div>
   <a href="<?=GITHUB_REPO_URL?>" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">
     <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" style="margin-right:4px"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -537,7 +538,7 @@ adminHeader('Software Update', 'sw_update');
       <div style="width:52px;height:52px;background:var(--g1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">&#128230;</div>
       <div>
         <div style="font-size:1.5rem;font-weight:700;color:var(--acc)">v<?=e($currentVersion)?></div>
-        <div style="font-size:.8rem;color:var(--g5)">DRXStore · <?=e(APP_NAME)?></div>
+        <div style="font-size:.8rem;color:var(--g5)"><?=e(APP_NAME)?></div>
       </div>
     </div>
   </div>
@@ -545,7 +546,7 @@ adminHeader('Software Update', 'sw_update');
   <div class="card">
     <div class="card-hdr"><div class="card-title">Update Source</div></div>
     <div class="card-body" style="font-size:.82rem;line-height:1.75;color:var(--g6)">
-      <div><strong>Repository:</strong> <a href="<?=GITHUB_REPO_URL?>" target="_blank" rel="noopener" style="color:var(--acc)">github.com/psvineet/drxstore</a></div>
+      <div><strong>Repository:</strong> <a href="<?=GITHUB_REPO_URL?>" target="_blank" rel="noopener" style="color:var(--acc)">github.com/<?=e(GITHUB_REPO)?></a></div>
       <div><strong>Channel:</strong> Latest stable release</div>
       <div><strong>Security:</strong> Downloads only from <code>github.com</code></div>
       <div style="margin-top:8px;padding:8px 10px;background:var(--g1);border-radius:var(--rl);font-size:.76rem">
@@ -611,7 +612,7 @@ adminHeader('Software Update', 'sw_update');
     <div class="card-hdr"><div class="card-title">Check for Updates</div></div>
     <div class="card-body">
       <p style="font-size:.83rem;color:var(--g6);margin-top:0">
-        Click the button below to query the GitHub Releases API and check whether a newer version of DRXStore is available.
+        Click the button below to query the GitHub Releases API and check whether a newer version of <?=e(APP_NAME)?> is available.
         No files are downloaded until you confirm.
       </p>
       <form method="POST" id="checkForm">

@@ -23,7 +23,7 @@ if ($db instanceof MySQLDB) {
     if ($q) {
         // Search by invoice number or customer name
         $qlike = '%' . $q . '%';
-        $where[] = "(LPAD(s.id,8,'0') LIKE ? OR c.name LIKE ? OR CONCAT('DRX-',YEAR(s.sale_date),'-',LPAD(s.id,8,'0')) LIKE ?)";
+        $where[] = "(LPAD(s.id,8,'0') LIKE ? OR c.name LIKE ? OR CONCAT('PHQ-',YEAR(s.sale_date),'-',LPAD(s.id,8,'0')) LIKE ?)";
         array_push($vals, $qlike, $qlike, $qlike);
     }
     if ($fd) { $where[] = "s.sale_date >= ?"; $vals[] = $fd; }
