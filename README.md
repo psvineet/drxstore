@@ -8,11 +8,11 @@
 
 ## Quick Start (Termux / XAMPP / Any PHP Server)
 
-1. Extract `drxstore/` to your web root
-2. Open browser → `http://localhost/drxstore/`
-3. The **Setup Wizard** launches automatically on first run
-4. Complete 4 steps: Store Info → Admin Account → Storage → Confirm
-5. Login with your credentials
+1. Extract `drxstore/` to your web root directory.
+2. Open your browser and navigate to `http://localhost/drxstore/`
+3. The **Setup Wizard** will launch automatically on first run.
+4. Complete the 4 setup steps: **Store Info** → **Admin Account** → **Storage** → **Confirm**
+5. Log in with your new admin credentials.
 
 ---
 
@@ -21,79 +21,78 @@
 ### Admin Portal
 
 | Module | Features |
-|---|---|
-| Dashboard | Live stats, 7-day chart, alerts, top medicines, recent sales |
-| Medicines | CRUD, search, dosage forms, HSN, GST%, rack location |
-| Import CSV | Bulk import from CSV with preview & duplicate detection |
-| Batches / Stock | Full management, expiry tracking, status filters |
-| Stock Adjustment | Add/Remove with reason & audit trail |
-| Suppliers | CRUD, auto-create portal accounts, email credentials |
-| Purchase Orders | Create POs, notify supplier by email, receive |
-| New Sale / POS | Cart, customer select, batch picker, live stock/MRP |
-| Payment Methods | Cash, UPI (ref no), Cheque (no+bank+date), Card, Credit |
-| Discounts | Percentage or flat, per-sale application |
-| Sales History | Date/customer filter, full invoice view & print |
-| Returns | Process returns, restock, refund tracking |
-| Customers | CRUD, purchase history, total spent |
-| Ledger | Income/expense/return entries with date filter |
-| Analytics | 12-month chart, top medicines, top customers, payment breakdown |
-| Expiry Report | Expired/30d/90d/good tier with stock info |
-| Users | Add/edit/toggle, role-based (admin/staff) |
-| Settings | Store info, currency, thresholds, SMTP, password change |
-| Software Update | GitHub-verified update delivery — no file uploads accepted |
+| --- | --- |
+| **Dashboard** | Live stats, 7-day sales chart, low-stock alerts, top medicines, recent activity |
+| **Medicines** | Full CRUD, search, dosage forms, HSN codes, GST%, rack location tracking |
+| **Import CSV** | Bulk import medicines from CSV with preview & duplicate detection |
+| **Batches & Stock** | Full batch management, expiry tracking, unit pricing, status filters |
+| **Stock Adjustment** | Add/Remove inventory with reason codes & audit trail |
+| **Suppliers** | Manage suppliers, auto-create portal accounts, automated credential email |
+| **Purchase Orders** | Create POs, notify suppliers via email, mark stock as received |
+| **POS / Billing** | Interactive cart, customer selection, unit batch picker, live MRP calculation |
+| **Payment Methods** | Cash, UPI (reference ID), Cheque (bank & date), Card, Credit ledger |
+| **Discounts** | Flat or percentage-based discount per sale |
+| **Sales History** | Filter by date/customer, view full invoice, print customer receipts |
+| **Returns** | Process return requests, restock inventory, refund audit trail |
+| **Customers** | Customer profile CRUD, purchase history, lifetime value tracking |
+| **Ledger** | Unified income, expense, and return records with custom date filters |
+| **Analytics** | 12-month visual chart, top medicines, customer spending, payment breakdown |
+| **Expiry Report** | Tiered reports (Expired, 30 days, 90 days, Good) with stock count |
+| **User Management**| Add/edit/toggle staff accounts, role-based access control (Admin/Staff) |
+| **Settings** | Store info, currency symbol, stock thresholds, SMTP setup, password change |
+| **Software Update**| GitHub-verified update delivery — no unverified file uploads accepted |
 
 ### Supplier Portal
 
-- Dashboard with order summary
-- View purchase orders, update status (confirmed → shipped → received)
-- Contact store via message form (notified by email)
-- Profile & password management
-- Admin can create supplier accounts and auto-email credentials
+- Dashboard with active purchase order summaries
+- View purchase orders and update delivery status (*Confirmed* → *Shipped* → *Received*)
+- Direct message interface to contact store administration via email notifications
+- Profile & account password management
 
 ### Customer / Patient Portal
 
-- Register with email verification required
-- View purchase history with printable invoices
-- Submit return requests (store notified by email)
-- Profile management
+- Account registration with email verification
+- Purchase history viewer with printable receipts and invoices
+- Submit item return requests directly to store administrators
+- Account profile management
 
 ---
 
 ## Setup Requirements
 
-- PHP 8.0+
-- Web server (Apache / Nginx / Termux httpd)
-- Write permission on `data/` folder: `chmod 755 data/`
-- `mail()` or configured SMTP for email features (optional)
+- **PHP:** 8.0 or higher
+- **Web Server:** Apache / Nginx / Termux `httpd`
+- **Permissions:** Write permissions on the `data/` directory (`chmod 755 data/`)
+- **Email:** `mail()` enabled or configured SMTP for automated emails (optional)
 
 ---
 
 ## Storage Options
 
-- **JSON** (default) — No setup, works on Termux immediately
-- **MySQL** — Select during setup wizard, same interface
+- **JSON (Default):** Zero-configuration database; runs out of the box on Termux and lightweight servers.
+- **MySQL:** Optional relational database support selectable during the Setup Wizard.
 
 ---
 
 ## Project Structure
 
-```
+```text
 drxstore/
-├── index.php               ← Router (all pages via ?p=pagename)
-├── config/app.php          ← Bootstrap & constants
+├── index.php                ← Router (all pages routed via ?p=pagename)
+├── config/app.php           ← Application bootstrap & system constants
 ├── helpers/
-│   ├── JsonDB.php          ← JSON storage engine
-│   ├── MySQLDB.php         ← MySQL storage engine
-│   ├── Mailer.php          ← SMTP mailer (AES-256-GCM for credentials)
-│   └── functions.php       ← Auth, CSRF, rate-limiting, all helpers
+│   ├── JsonDB.php           ← JSON storage engine
+│   ├── MySQLDB.php          ← MySQL storage engine
+│   ├── Mailer.php           ← SMTP mailer (AES-256-GCM encrypted credentials)
+│   └── functions.php        ← Auth, CSRF, rate-limiting, and core utilities
 ├── views/
-│   ├── layout_admin.php    ← Admin shell (security headers included)
-│   └── layout_portal.php
+│   ├── layout_admin.php     ← Admin shell layout (enforces security headers)
+│   └── layout_portal.php    ← Customer/Supplier portal shell layout
 ├── assets/
 │   ├── css/app.css
 │   └── js/app.js
-├── data/                   ← Auto-created; all JSON data lives here
-├── nginx.conf.example      ← Recommended Nginx config
+├── data/                    ← Auto-created directory for JSON storage
+├── nginx.conf.example       ← Recommended Nginx server configuration
 └── public/
     ├── admin/
     ├── supplier/
@@ -105,26 +104,29 @@ drxstore/
 
 ## Security
 
-Version 3.0.0 resolves 19 security issues across critical, high, medium, and low severity. See [SECURITY.md](SECURITY.md) for the disclosure policy and [CHANGELOG.md](CHANGELOG.md) for the full list of fixes.
+DRXStore follows strict security guidelines. Version 3.0.0 resolved 19 security issues across critical, high, medium, and low severity tiers. Refer to [SECURITY.md](SECURITY.md) for vulnerability disclosure policies and [CHANGELOG.md](CHANGELOG.md) for complete patch details.
 
-Key protections in this release:
+Key protections built into DRXStore:
 
-- Role-verified session checks (`requireAdmin()`) on every admin page
-- CSRF tokens on all forms and sensitive GET requests
-- Parameterised database queries throughout; `e()` escapes all output
-- AES-256-GCM encryption for stored SMTP credentials
-- Rate limiting and account lockout on all login forms
-- Session regeneration on login; idle timeout after 2 hours
-- Software updater downloads only from `github.com/psvineet/drxstore` via the GitHub API — no user-uploaded ZIP is accepted
-- Security headers (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy) on every admin response
-- Minimum password complexity enforced on all seven password forms
+- Strict role-verified session checks (`requireAdmin()`, `requireSupplier()`, `requireCustomer()`) on all protected pages
+- Anti-CSRF token verification on all POST forms and sensitive GET operations
+- Parameterised database queries with automatic `e()` HTML escaping on output
+- **AES-256-GCM** encryption for stored SMTP credentials at rest
+- IP-based rate limiting and account lockouts across login and contact forms
+- Session ID regeneration on authentication with a 2-hour idle timeout
+- Secure updater fetching updates strictly from `github.com/psvineet/drxstore` via GitHub API
+- Hardened HTTP security headers (`CSP`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`)
+- Strict password complexity enforcement across all forms
 
 ---
 
-## Contact
+## Support & Community
 
-**Developer:** Vineet
-**Email:** ci.vps@proton.me
+If you have questions, need assistance with installation, or want to suggest new features, please join our community:
+
+- **Help & Questions:** Open a topic in [GitHub Discussions](https://github.com/psvineet/drxstore/discussions)
+- **Direct Email Contact:** [ci.vps@proton.me](mailto:ci.vps@proton.me)
+- **Security Disclosures:** Please review our [Security Policy](SECURITY.md) to submit private reports.
 
 ---
 
