@@ -2,73 +2,70 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-|---------|--------------------|
-| 3.0.0   | Yes — current release |
-| 2.0.0   | No — end of life; upgrade immediately |
+| Version | Supported | Notes |
+| :--- | :--- | :--- |
+| **3.0.x** | Yes | Current active release |
+| **2.0.x** | No | End of Life; upgrade immediately |
 
 ---
 
 ## Reporting a Vulnerability
 
-**Do not open a public GitHub issue for security vulnerabilities.**
+**Please do not open a public GitHub issue for security vulnerabilities.**
 
-Open a [GitHub Security Advisory](https://github.com/psvineet/drxstore/security/advisories/new) on this repository, or email **ci.vps@proton.me** with:
+If you discover a security vulnerability in DRXStore, please report it privately via a [GitHub Security Advisory](https://github.com/psvineet/drxstore/security/advisories/new) or by emailing **ci.vps@proton.me**.
 
-- A clear description of the issue
-- Steps to reproduce
-- The version and storage backend (JSON / MySQL) you tested against
-- Any suggested fix or CVSS vector if you have one
+### Please include:
+* A clear description of the issue
+* Step-by-step instructions to reproduce the vulnerability
+* The specific version and storage backend (JSON / MySQL) tested
+* Any suggested fix, proof-of-concept (PoC), or CVSS vector if available
 
-### What to expect
+### What to expect:
+* **Acknowledgement:** Within 48 hours
+* **Fix Target:** Agreed patch and coordinated disclosure timeline within 7 days
+* **Credit:** Acknowledgment in the changelog, security advisory, and release notes for confirmed issues (including your name and a link of your choice)
 
-- Acknowledgement within **48 hours**
-- Fix target and coordinated disclosure timeline agreed within **7 days**
-- Credit in the changelog, advisory, and release notes for confirmed issues — your name and a link of your choice
-
-We follow a **90-day disclosure window** from the date of first contact.
+We follow a **90-day coordinated disclosure window** from the date of first contact.
 
 ---
 
 ## Disclosure History
 
 ### 3.0.0 — October 2026
+* **Reported by:** Anil Kumar Voleti ([LinkedIn Profile](https://www.linkedin.com/in/voleti-anil/))
+* **Overview:** Anil identified two critical vulnerabilities in DRXStore 2.0.0 through independent research on a local installation. He reported them privately, coordinated the timeline, and performed independent patch verification against the `v3.0.0` release.
 
-**Reported by:** Anil Kumar Voleti
-**Profile:** https://www.linkedin.com/in/voleti-anil/
+| ID | Severity | Issue Summary |
+| :--- | :--- | :--- |
+| **C1** | **Critical** | **Broken Authorization:** `requireAdmin()` checked session existence but not the user role, granting staff users access to all admin pages. Combined with `users.php` accepting the `role` field from POST without restriction, a staff user could escalate to admin. |
+| **C2** | **Critical** | **Remote Code Execution (RCE):** The software updater accepted an arbitrary uploaded ZIP archive with no file-type restrictions or signature verification. An uploaded PHP file could be requested directly over HTTP and executed. |
 
-Anil identified two critical vulnerabilities in DRXStore 2.0.0 through independent research on a local installation. He reported them directly and privately before any public disclosure, coordinated the timeline, and offered independent verification of the patch — which he carried out against the v3.0.0 tag after it was published.
+* **Tracking:** [GHSA-7xhx-j29g-xgx4](https://github.com/psvineet/drxstore/security/advisories/GHSA-7xhx-j29g-xgx4)
+* **CVE Status:** Pending
+* **CVSS v3.1 Score:** **8.8** (`CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H`)
+* **CWE References:** `CWE-863` (Incorrect Authorization), `CWE-434` (Unrestricted Upload of File with Dangerous Type)
 
-| ID | Severity | Issue |
-|----|----------|-------|
-| C1 | Critical | Broken authorization — `requireAdmin()` checked session existence but not role, granting staff users access to all admin-only pages; combined with `users.php` accepting the `role` field from POST without restriction, a staff user could escalate to admin |
-| C2 | Critical | Remote code execution — software updater accepted an arbitrary uploaded ZIP with no file-type restriction or signature verification; an uploaded PHP file could be requested over HTTP and executed |
-
-**CVE: Pending (Tracked via https://github.com/psvineet/drxstore/security/advisories/GHSA-7xhx-j29g-xgx4)
-**CVSS:** 8.8 — `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H`
-**CWE:** CWE-863 (Incorrect Authorization), CWE-434 (Unrestricted Upload of File with Dangerous Type)
-
-All 19 issues are resolved in v3.0.0. Full fix details are in [CHANGELOG.md](CHANGELOG.md).
+> *Note: All identified issues were resolved in v3.0.0. Refer to `CHANGELOG.md` for full implementation details.*
 
 ---
 
-## Security Design (v3.0.0)
+## Security Design (v3.0.0+)
 
-- `requireAdmin()`, `requireSupplier()`, `requireCustomer()` verify both session and role on every protected page
-- CSRF tokens on every POST; sensitive GETs validated with `verifyCsrfGet()`
-- All DB queries parameterised; all output wrapped in `e()` (`htmlspecialchars`)
-- SMTP password encrypted with AES-256-GCM at rest
-- Rate limiting and lockout on all login forms and the supplier contact form
-- `session_regenerate_id(true)` on login; idle timeout after 2 hours
-- Software updater fetches only from `github.com/psvineet/drxstore` via GitHub API — no user-uploaded archive accepted; executable file types blocked on extraction
-- Security headers on every admin response (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy)
-- Minimum 8-character password with digit or special character enforced on all password forms
-- `nginx.conf.example` and PHP-level guards block direct HTTP access to `data/`, `config/`, `helpers/`, `views/`
+* **Role-Based Access Control:** `requireAdmin()`, `requireSupplier()`, and `requireCustomer()` strictly verify both session validity and role privileges on every protected page.
+* **CSRF Protection:** Anti-CSRF tokens enforced on all POST requests; sensitive GET actions validated via `verifyCsrfGet()`.
+* **Injection Defense:** All database queries are parameterised; HTML outputs are escaped using `e()` (`htmlspecialchars`).
+* **Data Encryption:** Sensitive configurations (such as SMTP passwords) are encrypted using **AES-256-GCM** at rest.
+* **Authentication Security:** Rate limiting and IP lockout active across all login forms and the supplier contact interface. `session_regenerate_id(true)` executed upon authentication; 2-hour idle timeout enforced.
+* **Secure Updater:** Updates are restricted to official releases fetched strictly from `github.com/psvineet/drxstore` via the GitHub API. Direct user-uploaded archives are rejected, and executable file types are blocked during extraction.
+* **Hardened Security Headers:** Admin responses enforce strict HTTP headers (`CSP`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`).
+* **Path & Directory Protection:** Web server rules (`nginx.conf.example`, `.htaccess`) and PHP-level entry guards block direct HTTP access to internal directories (`/data`, `/config`, `/helpers`, `/views`).
+* **Password Policy:** Minimum 8-character passwords with mandatory numeric or special character requirements enforced.
 
 ---
 
-## Known Limitations
+## Known Limitations & Roadmap
 
-- CSP allows `unsafe-inline` — inline scripts and styles will be moved to external files in a future release to allow a stricter policy
-- Update packages are not signed — signed releases are on the roadmap
-- An admin can change their own role — a self-role-change guard is planned for the next release
+* **Content Security Policy (CSP):** Currently allows `'unsafe-inline'`. Inline scripts and styles are scheduled to be migrated to external files in an upcoming release to enforce a strict nonce/hash-based CSP.
+* **Package Signatures:** Update packages are not yet cryptographically signed; release signing is planned on the development roadmap.
+* **Self-Role Modification Guard:** An admin can currently change their own role; a self-role-change protection guard is planned for the next release.
