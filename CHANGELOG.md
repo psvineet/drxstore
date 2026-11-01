@@ -4,6 +4,17 @@ All notable changes to DRXStore are documented here.
 
 ---
 
+## [3.0.1] — 2026-10-30
+### What's Changed & Bug Fixes
+
+- **Open Source Licensing:** Added GNU General Public License v3.0 (GPLv3) to the repository (`LICENSE`).
+- **Version Tracking:** Fixed `APP_VERSION` constant reporting 2.0.0; updater now automatically rewrites the version string in `config/app.php` post-update.
+- **Export Enhancements:**
+  - Resolved UTF-8 BOM encoding issue causing mojibake in Excel CSV exports.
+  - Improved XLSX export formatting with bold header rows, frozen top rows, and auto-adjusted column widths.
+ 
+---
+  
 ## [3.0.0] — 2026-10-30
 
 ### Summary
