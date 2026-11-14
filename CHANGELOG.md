@@ -4,6 +4,59 @@ All notable changes to DRXStore are documented here.
 
 ---
 
+## [3.1.0] — 2026-11-14
+
+### UI Changes
+
+- **Favicon changed from `Rx` to `Dx`** across the admin portal.
+- **Cart row now shows strip breakdown:** when an item is added in strip mode, the cart sub-line reads e.g. "2 strips × 10 = 20 units @ ₹8.50/unit" instead of the flat unit count.
+- **Stock display shows strip availability:** the batch info bar now reads e.g. "80 units (8 strips)" when the selected batch has a strip packing, so staff can see both counts at a glance.
+
+### Bug Fixes
+
+- **POS strip mode — `qty_mode` not posted to server:** the strip/unit mode selection was converted client-side but `cart_add.php` never received it, so strip-sourced cart items had no `strips` or `strip_qty` metadata. Fixed: a hidden `qty_mode` field is now posted; `cart_add.php` reads it and stores `strips` and `strip_qty` in the cart item for display.
+- **Dead `actual_qty` hidden field removed:** `posUpdateQtyCalc()` created a redundant `actual_qty` hidden input that was never read by the server. The form-submit interceptor already rewrites `qty` directly; the dead field is gone.
+- **Strip mode min-qty guard:** submitting 0 strips now blocks submission and shows an inline alert instead of silently adding 0 units to the cart.
+
+### Breaking Changes
+
+- **Medicines import/export: CSV only.** XLSX import and XLSX export have been removed from the Medicines module. Import now accepts `.csv` and `.txt` only; the export dropdown has been replaced with a single "Export CSV" button. The exported CSV includes a UTF-8 BOM so it opens correctly in Excel without any configuration. The sample download also gains the BOM. This simplifies the codebase, removes the ZipArchive dependency from the medicines page, and eliminates a class of formatting bugs that affected the hand-rolled XLSX writer.
+
+### New Features
+
+- **Strip/Packing-based stock entry:** Batches can now be entered and sold by strip or pack, not just by unit. When adding or receiving a batch, select a packing type (Blister, Alu-Alu, Strip, Bottle, Vial, Ampoule, Tube, Sachet, Jar, Box, Other) and set units-per-strip. Switching to "Strips" mode auto-calculates total unit quantity (`strips × units/strip`) and converts strip-price to per-unit MRP automatically — stored internally as per-unit.
+- **Purchase Price now strip-aware in Batch add/edit:** When entering a batch in Strips mode, the Purchase Price label changes to "Purchase Price/Strip" and the hint shows the computed per-unit cost and GST breakdown live. On save, the per-strip value is automatically divided by units-per-strip and stored as per-unit (matching the behaviour already in place for MRP). The `purchase_price` column is upgraded from `DECIMAL(10,2)` to `DECIMAL(10,4)` (auto-migrated on boot) for accurate sub-unit storage.
+- **Packing type column in Batch List:** Batch table now shows packing type and units-per-strip.
+
+### Bug Fixes
+
+- **Version display double-v:** Software update page showed `vv3.0.1` when a new release was available. Version tag is now stripped of its leading `v` before display.
+- **Version card double name:** Installed version card showed `DRXStore · DRXStore` (APP_NAME repeated). Fixed to show just `DRXStore`.
+- **Software Updater icon missing:** Nav menu item had no icon (`update` key was absent from icon map). Added correct refresh SVG icon.
+- **Settings card stale text:** Software Update card on settings page still referenced the old "Upload a ZIP" method. Updated to reflect the GitHub-based updater with SHA256 verification.
+- **attribution.php hardcoded version:** `_BUILD_SIG` and canonical version were hardcoded as `v2.0.0`/`1.0`. Now derived from `APP_VERSION` constant so they auto-reflect the installed version after every upgrade.
+- **Emojis replaced with SVGs:** All emoji characters (🔄 📦 🔒 🚀 ✓) in the Software Update page replaced with inline SVG icons for consistent rendering across all platforms.
+- **purchase.php existing-batch missing strip fields:** When receiving a PO where the batch already existed, `strip_qty` and `packing_type` were not updated on merge. Fixed.
+- **purchase.php JS receive modal strip fields missing:** Dynamically-built receive modal rows lacked packing type, units-per-strip, and qty-mode selects. Fixed to match the server-rendered version.
+- **get_batches.php unescaped output:** `packing_type` value was not HTML-escaped in option label text. Fixed with `htmlspecialchars()`.
+- **backup_mysql CSRF missing:** Settings MySQL backup link had no CSRF token; handler had no `verifyCsrfGet()` call. Both fixed.
+
+### Database / Schema
+
+- **MRP precision:** `batches.mrp`, `sales_items.mrp`, and `po_items.mrp` upgraded from `DECIMAL(10,2)` to `DECIMAL(10,4)` — prevents rounding loss on per-unit prices computed from strip prices (e.g. ₹60 ÷ 7 units = ₹8.5714).
+- **Auto-migration on boot:** `MySQLDB::migrate()` automatically upgrades column types and adds missing columns on first boot after upgrade — zero manual SQL required.
+- **schema.sql updated to v3.1.0:** Reflects all column changes above with inline migration `ALTER TABLE` statements for manual runs.
+
+### Upgrade & Backup
+
+- **Mandatory pre-upgrade backup:** Applying any update now automatically creates a full data backup before touching any files — ZIP for JSON storage, SQL dump for MySQL. The backup downloads to the browser immediately after the update applies.
+- **Re-download backup button:** Software Update page shows a persistent "Download Backup" button after every successful update so the backup can be retrieved again if the initial download was missed.
+- **JSON backup in Settings:** JSON storage users now have a "Download JSON Backup (.zip)" button in Settings → Database Backup & Restore, matching the existing MySQL backup option.
+
+#### and many more..... 
+
+---
+
 ## [3.0.1] — 2026-10-30
 ### What's Changed & Bug Fixes
 

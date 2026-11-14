@@ -21,14 +21,30 @@ if (!empty($_GET['ajax']) && $_GET['ajax']==='batches') {
 if($_SERVER['REQUEST_METHOD']==='POST'){
     verifyCsrf(); $act=post('action'); $id=postInt('id');
     $mid=postInt('medicine_id'); $bno=post('batch_no'); $exp=post('expiry');
-    $mfg=post('mfg_date'); $qty=postInt('qty'); $pp=postFloat('purchase_price'); $mrp=postFloat('mrp'); $sup=postInt('supplier_id')?:null;
+    $mfg=post('mfg_date'); $pp=postFloat('purchase_price'); $sup=postInt('supplier_id')?:null;
+    $packingType = post('packing_type', '');
+    $stripQty    = max(1, postInt('strip_qty', 1));
+    $qtyMode     = post('qty_mode', 'unit'); // 'strip' or 'unit'
+    $mrp         = postFloat('mrp');
+    // If qty entered as strips, convert to units for storage
+    if ($qtyMode === 'strip' && $stripQty > 1) {
+        $stripsEntered = max(1, postInt('qty', 1));
+        $qty = $stripsEntered * $stripQty;
+        // MRP entered as price per strip — convert to per unit
+        if ($mrp > 0) $mrp = round($mrp / $stripQty, 4);
+        // Purchase price entered as per strip — convert to per unit
+        if ($pp > 0) $pp = round($pp / $stripQty, 4);
+    } else {
+        $qty = postInt('qty', 0);
+        // MRP and purchase price entered as per-unit — stored as-is
+    }
     if(!$mid) $errors[]='Select medicine.';
     if(!$bno) $errors[]='Batch number required.';
     if(!$exp) $errors[]='Expiry date required.';
     if($qty<=0) $errors[]='Qty must be > 0.';
     if($mrp<=0) $errors[]='MRP must be > 0.';
     if(empty($errors)){
-        $data=['batch_no'=>$bno,'expiry_date'=>$exp,'mfg_date'=>$mfg,'quantity'=>$qty,'purchase_price'=>$pp,'mrp'=>$mrp,'supplier_id'=>$sup,'updated_at'=>date('Y-m-d H:i:s')];
+        $data=['batch_no'=>$bno,'expiry_date'=>$exp,'mfg_date'=>$mfg,'quantity'=>$qty,'purchase_price'=>$pp,'mrp'=>$mrp,'supplier_id'=>$sup,'strip_qty'=>$stripQty,'packing_type'=>$packingType,'updated_at'=>date('Y-m-d H:i:s')];
         if($act==='edit'&&$id){$db->update('batches',fn($b)=>$b['id']===$id,$data);setFlash('success','Batch updated.');}
         else{$data['medicine_id']=$mid;$data['created_at']=date('Y-m-d H:i:s');$db->insert('batches',$data);setFlash('success','Batch added.');}
         header('Location: index.php?p=batches');exit;
@@ -74,7 +90,7 @@ adminHeader('Batches & Stock','batches');
   <div class="card-body p0">
     <?php if(empty($pag['items'])):?><div class="empty-state"><p>No batches found.</p></div><?php else:?>
     <div class="table-wrap"><table class="tbl">
-      <thead><tr><th>#</th><th>Medicine</th><th>Batch No</th><th>Mfg</th><th>Expiry</th><th>Stock</th><th class="tr">Purchase</th><th class="tr">MRP</th><th>Supplier</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>Medicine</th><th>Batch No</th><th>Packing</th><th>Mfg</th><th>Expiry</th><th>Stock</th><th class="tr">Purchase</th><th class="tr">MRP/Unit</th><th>Supplier</th><th></th></tr></thead>
       <tbody>
       <?php foreach($pag['items'] as $b):
         $med=$medMap[$b['medicine_id']??0]??null;
@@ -84,6 +100,7 @@ adminHeader('Batches & Stock','batches');
         <td class="text-muted text-sm"><?=e($b['id'])?></td>
         <td class="fw-600"><?=e($med['name']??'—')?></td>
         <td><code class="mono"><?=e($b['batch_no'])?></code></td>
+        <td class="text-sm text-muted"><?php $pt=e($b['packing_type']??''); $sq=(int)($b['strip_qty']??1); echo $pt?($sq>1?$pt.' ('.$sq.'/strip)':$pt):'—'; ?></td>
         <td class="text-sm text-muted"><?=e($b['mfg_date']??'—')?></td>
         <td><?=expiryChip($b['expiry_date']??'')?></td>
         <td><?=stockChip((int)($b['quantity']??0))?></td>
@@ -122,16 +139,45 @@ adminHeader('Batches & Stock','batches');
         <div class="form-group"><label class="form-label">Mfg Date</label><input class="form-control" type="date" name="mfg_date" value="<?=e($edit['mfg_date']??post('mfg_date'))?>"></div>
         <div class="form-group"><label class="form-label">Expiry Date <span class="req">*</span></label><input class="form-control" type="date" name="expiry" value="<?=e($edit['expiry_date']??post('expiry'))?>" required></div>
       </div>
-      <div class="form-row-3">
-        <div class="form-group"><label class="form-label">Quantity <span class="req">*</span></label><input class="form-control" type="number" name="qty" value="<?=e($edit['quantity']??post('qty'))?>" min="1" required></div>
+      <!-- Packing type + strip qty -->
+      <div class="form-row-2">
         <div class="form-group">
-          <label class="form-label">Purchase Price — <span style="font-weight:400;color:var(--g5)">GST Inclusive</span></label>
-          <input class="form-control" type="number" step="0.01" name="purchase_price" id="inp_pp" value="<?=e($edit['purchase_price']??post('purchase_price'))?>" min="0" oninput="calcGst()">
+          <label class="form-label">Packing Type</label>
+          <select class="form-control" name="packing_type" id="inp_packing" onchange="updateQtyMode()">
+            <option value="">— Select —</option>
+            <?php foreach(['Blister','Alu-Alu','Strip','Bottle','Vial','Ampoule','Tube','Sachet','Jar','Box','Other'] as $pt): ?>
+            <option value="<?=e($pt)?>" <?=($edit['packing_type']??post('packing_type'))===$pt?'selected':''?>><?=e($pt)?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Units per Strip / Pack</label>
+          <input class="form-control" type="number" name="strip_qty" id="inp_strip_qty" value="<?=e($edit['strip_qty']??post('strip_qty',1))?>" min="1" placeholder="e.g. 10" oninput="updateQtyMode()">
+          <div class="form-hint">Set &gt; 1 to enable strip-based entry</div>
+        </div>
+      </div>
+      <!-- Quantity mode toggle -->
+      <div class="form-group" id="qty_mode_wrap" style="display:none">
+        <label class="form-label">Enter Quantity As</label>
+        <div class="flex gap-2">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="qty_mode" value="unit" checked onchange="toggleQtyFields()"> Units</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="qty_mode" value="strip" onchange="toggleQtyFields()"> Strips</label>
+        </div>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group">
+          <label class="form-label" id="qty_label">Quantity (Units) <span class="req">*</span></label>
+          <input class="form-control" type="number" name="qty" id="inp_qty" value="<?=e($edit['quantity']??post('qty'))?>" min="1" required oninput="updateQtyCalc()">
+          <div id="qty_calc_hint" class="form-hint" style="color:var(--teal);margin-top:4px"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" id="pp_label">Purchase Price/Unit — <span style="font-weight:400;color:var(--g5)">GST Incl.</span></label>
+          <input class="form-control" type="number" step="0.0001" name="purchase_price" id="inp_pp" value="<?=e($edit['purchase_price']??post('purchase_price'))?>" min="0" oninput="calcGst()">
           <div id="pp_breakdown" class="form-hint" style="color:var(--teal);margin-top:4px"></div>
         </div>
         <div class="form-group">
-          <label class="form-label">MRP <span class="req">*</span> — <span style="font-weight:400;color:var(--g5)">GST Inclusive</span></label>
-          <input class="form-control" type="number" step="0.01" name="mrp" id="inp_mrp" value="<?=e($edit['mrp']??post('mrp'))?>" min="0.01" required oninput="calcGst()">
+          <label class="form-label" id="mrp_label">MRP/Unit <span class="req">*</span> — <span style="font-weight:400;color:var(--g5)">GST Incl.</span></label>
+          <input class="form-control" type="number" step="0.0001" name="mrp" id="inp_mrp" value="<?=e($edit['mrp']??post('mrp'))?>" min="0.0001" required oninput="calcGst()">
           <div id="mrp_breakdown" class="form-hint" style="color:var(--teal);margin-top:4px"></div>
         </div>
       </div>
@@ -146,44 +192,112 @@ adminHeader('Batches & Stock','batches');
 </div>
 <?php if($edit):?><script>openModal('bModal');</script><?php endif;?>
 <script>
+function getStripQty(){ return Math.max(1, parseInt(document.getElementById('inp_strip_qty')&&document.getElementById('inp_strip_qty').value||1)||1); }
+function getQtyMode(){
+  var r = document.querySelector('input[name="qty_mode"]:checked');
+  return r ? r.value : 'unit';
+}
+
+function updateQtyMode(){
+  var sq = getStripQty();
+  var wrap = document.getElementById('qty_mode_wrap');
+  if(wrap) wrap.style.display = sq > 1 ? '' : 'none';
+  toggleQtyFields();
+}
+
+function toggleQtyFields(){
+  var sq = getStripQty();
+  var mode = getQtyMode();
+  var qtyLabel = document.getElementById('qty_label');
+  var mrpLabel = document.getElementById('mrp_label');
+  var ppLabel  = document.getElementById('pp_label');
+  if(mode === 'strip' && sq > 1){
+    if(qtyLabel) qtyLabel.innerHTML = 'Quantity (Strips) <span class="req">*</span>';
+    if(mrpLabel) mrpLabel.innerHTML = 'MRP per Strip <span class="req">*</span> &mdash; <span style="font-weight:400;color:var(--g5)">GST Incl. Auto-calc per unit</span>';
+    if(ppLabel)  ppLabel.innerHTML  = 'Purchase Price/Strip &mdash; <span style="font-weight:400;color:var(--g5)">GST Incl. Auto-calc per unit</span>';
+  } else {
+    if(qtyLabel) qtyLabel.innerHTML = 'Quantity (Units) <span class="req">*</span>';
+    if(mrpLabel) mrpLabel.innerHTML = 'MRP/Unit <span class="req">*</span> &mdash; <span style="font-weight:400;color:var(--g5)">GST Incl.</span>';
+    if(ppLabel)  ppLabel.innerHTML  = 'Purchase Price/Unit &mdash; <span style="font-weight:400;color:var(--g5)">GST Incl.</span>';
+  }
+  updateQtyCalc();
+  calcGst();
+}
+
+function updateQtyCalc(){
+  var sq = getStripQty();
+  var mode = getQtyMode();
+  var inp = document.getElementById('inp_qty');
+  var hint = document.getElementById('qty_calc_hint');
+  if(!inp || !hint) return;
+  if(mode === 'strip' && sq > 1){
+    var strips = parseInt(inp.value)||0;
+    if(strips > 0) hint.innerHTML = strips + ' strips &times; ' + sq + ' units = <strong>' + (strips*sq) + ' units</strong> will be added to stock';
+    else hint.innerHTML = '';
+  } else {
+    hint.innerHTML = '';
+  }
+}
+
 function calcGst(){
-  // Get GST % from selected medicine
   var medSel = document.querySelector('select[name="medicine_id"]');
   var gstPct = 0;
   if(medSel && medSel.options[medSel.selectedIndex]){
     gstPct = parseFloat(medSel.options[medSel.selectedIndex].getAttribute('data-gst')||0)||0;
   }
-  if(!gstPct) gstPct = 12; // default if not set
+  if(!gstPct) gstPct = 12;
+
+  var sq = getStripQty();
+  var mode = getQtyMode();
 
   // MRP breakdown
-  var mrp = parseFloat(document.getElementById('inp_mrp')&&document.getElementById('inp_mrp').value)||0;
-  if(mrp>0&&gstPct>0){
-    var mrpBase = (mrp/(1+gstPct/100)).toFixed(2);
-    var mrpGst  = (mrp-mrpBase).toFixed(2);
-    var el = document.getElementById('mrp_breakdown');
-    if(el) el.innerHTML = 'Base (excl. GST '+gstPct+'%): <strong>'+mrpBase+'</strong> &nbsp;|&nbsp; GST: <strong>'+mrpGst+'</strong>';
+  var mrpEl = document.getElementById('inp_mrp');
+  var mrp = parseFloat(mrpEl&&mrpEl.value)||0;
+  var mrpBreak = document.getElementById('mrp_breakdown');
+  if(mrp > 0){
+    if(mode === 'strip' && sq > 1){
+      var perUnit = mrp / sq;
+      var perUnitBase = (perUnit/(1+gstPct/100)).toFixed(4);
+      if(mrpBreak) mrpBreak.innerHTML = 'Per unit: <strong>&#8377;'+perUnit.toFixed(4)+'</strong> &nbsp;|&nbsp; Base/unit: <strong>&#8377;'+perUnitBase+'</strong> &nbsp;|&nbsp; GST '+gstPct+'%/unit: <strong>&#8377;'+(perUnit - parseFloat(perUnitBase)).toFixed(4)+'</strong>';
+    } else {
+      var mrpBase = (mrp/(1+gstPct/100)).toFixed(2);
+      var mrpGst  = (mrp - parseFloat(mrpBase)).toFixed(2);
+      if(mrpBreak) mrpBreak.innerHTML = 'Base (excl. GST '+gstPct+'%): <strong>&#8377;'+mrpBase+'</strong> &nbsp;|&nbsp; GST: <strong>&#8377;'+mrpGst+'</strong>';
+    }
   } else {
-    var el = document.getElementById('mrp_breakdown');
-    if(el) el.innerHTML='';
+    if(mrpBreak) mrpBreak.innerHTML = '';
   }
 
   // Purchase price breakdown
   var pp = parseFloat(document.getElementById('inp_pp')&&document.getElementById('inp_pp').value)||0;
-  if(pp>0&&gstPct>0){
-    var ppBase = (pp/(1+gstPct/100)).toFixed(2);
-    var ppGst  = (pp-ppBase).toFixed(2);
-    var el2 = document.getElementById('pp_breakdown');
-    if(el2) el2.innerHTML = 'Base (excl. GST '+gstPct+'%): <strong>'+ppBase+'</strong> &nbsp;|&nbsp; GST: <strong>'+ppGst+'</strong>';
+  var el2 = document.getElementById('pp_breakdown');
+  if(pp > 0){
+    if(mode === 'strip' && sq > 1){
+      var ppPerUnit     = pp / sq;
+      var ppPerUnitBase = (ppPerUnit / (1 + gstPct/100)).toFixed(4);
+      var ppPerUnitGst  = (ppPerUnit - parseFloat(ppPerUnitBase)).toFixed(4);
+      var ppStripBase   = (pp / (1 + gstPct/100)).toFixed(2);
+      var ppStripGst    = (pp - parseFloat(ppStripBase)).toFixed(2);
+      if(el2) el2.innerHTML =
+        'Per unit: <strong>&#8377;'+ppPerUnit.toFixed(4)+'</strong>'
+        +' &nbsp;|&nbsp; Base/unit: <strong>&#8377;'+ppPerUnitBase+'</strong>'
+        +' &nbsp;|&nbsp; GST '+gstPct+'%/unit: <strong>&#8377;'+ppPerUnitGst+'</strong>'
+        +'<br>Per strip base: <strong>&#8377;'+ppStripBase+'</strong>'
+        +' &nbsp;|&nbsp; GST/strip: <strong>&#8377;'+ppStripGst+'</strong>';
+    } else {
+      var ppBase = (pp/(1+gstPct/100)).toFixed(2);
+      var ppGst  = (pp - parseFloat(ppBase)).toFixed(2);
+      if(el2) el2.innerHTML = 'Base (excl. GST '+gstPct+'%): <strong>&#8377;'+ppBase+'</strong> &nbsp;|&nbsp; GST: <strong>&#8377;'+ppGst+'</strong>';
+    }
   } else {
-    var el2 = document.getElementById('pp_breakdown');
-    if(el2) el2.innerHTML='';
+    if(el2) el2.innerHTML = '';
   }
 }
 
-// Re-run when medicine selection changes (different GST rate)
 document.addEventListener('DOMContentLoaded',function(){
-  var medSel=document.querySelector('select[name="medicine_id"]');
-  if(medSel) medSel.addEventListener('change',calcGst);
+  var medSel = document.querySelector('select[name="medicine_id"]');
+  if(medSel) medSel.addEventListener('change', calcGst);
+  updateQtyMode();
   calcGst();
 });
 </script>

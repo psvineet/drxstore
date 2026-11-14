@@ -59,9 +59,19 @@ if($_SERVER['REQUEST_METHOD']==='POST' && post('action')==='receive_po'){
             if(!$bno) $bno = 'BN-'.strtoupper(substr(md5($medId.date('Ymd')),0,6));
             $exp    = trim($bd['expiry_date'] ?? '');
             $mfg    = trim($bd['mfg_date']    ?? '');
-            $mrp    = (float)($bd['mrp']           > 0 ? $bd['mrp']           : ($poi['price'] ?? 0));
-            $pp     = (float)($bd['purchase_price'] > 0 ? $bd['purchase_price'] : $mrp);
-            $qty    = max(1,(int)($bd['qty'] ?? $poi['quantity']));
+            $rawMrp = (float)($bd['mrp'] > 0 ? $bd['mrp'] : ($poi['price'] ?? 0));
+            $pp     = (float)($bd['purchase_price'] > 0 ? $bd['purchase_price'] : $rawMrp);
+            $stripQtyBatch = max(1, (int)($bd['strip_qty'] ?? 1));
+            $packingTypeBatch = trim($bd['packing_type'] ?? '');
+            $qtyModeBatch = trim($bd['qty_mode'] ?? 'unit');
+            // If strip mode and strip_qty > 1: qty is strips entered, convert to units; MRP is per-strip, convert to per-unit
+            if ($qtyModeBatch === 'strip' && $stripQtyBatch > 1) {
+                $qty = max(1, (int)($bd['qty'] ?? $poi['quantity'])) * $stripQtyBatch;
+                $mrp = $stripQtyBatch > 0 ? round($rawMrp / $stripQtyBatch, 4) : $rawMrp;
+            } else {
+                $qty = max(1,(int)($bd['qty'] ?? $poi['quantity']));
+                $mrp = $rawMrp;
+            }
             // Use == (loose) for existBatch — MySQL may return string IDs
             $existBatch = $db->findOne('batches', fn($b) => (int)$b['medicine_id'] == $medId && trim($b['batch_no']) === $bno);
             if($existBatch){
@@ -74,6 +84,8 @@ if($_SERVER['REQUEST_METHOD']==='POST' && post('action')==='receive_po'){
                     'mrp'            => $mrp,
                     'purchase_price' => $pp,
                     'expiry_date'    => $exp,
+                    'strip_qty'      => $stripQtyBatch,
+                    'packing_type'   => $packingTypeBatch,
                     'updated_at'     => date('Y-m-d H:i:s'),
                 ]);
                 $db->insert('stock_adjustments',['batch_id'=>(int)$existBatch['id'],'medicine_id'=>$medId,'type'=>'add','quantity'=>$qty,'reason'=>'PO Received: '.poNo($pid),'old_qty'=>$totalBeforeEx,'new_qty'=>$totalAfterEx,'user_id'=>$_SESSION['admin_id']??0,'created_at'=>date('Y-m-d H:i:s')]);
@@ -90,6 +102,8 @@ if($_SERVER['REQUEST_METHOD']==='POST' && post('action')==='receive_po'){
                     'expiry_date'    => $exp,
                     'mfg_date'       => $mfg ?: null,
                     'supplier_id'    => $po['supplier_id'] ?? null,
+                    'strip_qty'      => $stripQtyBatch,
+                    'packing_type'   => $packingTypeBatch,
                     'created_at'     => date('Y-m-d H:i:s'),
                 ]);
                 $db->insert('stock_adjustments',['batch_id'=>$batId,'medicine_id'=>$medId,'type'=>'add','quantity'=>$qty,'reason'=>'PO Received: '.poNo($pid),'old_qty'=>$totalBefore,'new_qty'=>$totalAfterNew,'user_id'=>$_SESSION['admin_id']??0,'created_at'=>date('Y-m-d H:i:s')]);
@@ -320,10 +334,28 @@ adminHeader('Purchase Orders','purchase');
             <input class="form-control" type="date" name="batch[<?=$poi['id']?>][expiry_date]" required></div>
           <div class="form-group" style="margin:0"><label class="form-label text-xs">Mfg. Date</label>
             <input class="form-control" type="date" name="batch[<?=$poi['id']?>][mfg_date]"></div>
-          <div class="form-group" style="margin:0"><label class="form-label text-xs">Purchase Price / Unit <span class="req">*</span></label>
+          <div class="form-group" style="margin:0"><label class="form-label text-xs">Packing Type</label>
+            <select class="form-control" name="batch[<?=$poi['id']?>][packing_type]">
+              <option value="">— Select —</option>
+              <?php foreach(['Blister','Alu-Alu','Strip','Bottle','Vial','Ampoule','Tube','Sachet','Jar','Box','Other'] as $ptOpt): ?>
+              <option value="<?=e($ptOpt)?>"><?=e($ptOpt)?></option>
+              <?php endforeach; ?>
+            </select></div>
+          <div class="form-group" style="margin:0"><label class="form-label text-xs">Units per Strip</label>
+            <input class="form-control" type="number" name="batch[<?=$poi['id']?>][strip_qty]" value="1" min="1" placeholder="e.g. 10" id="recv_sq_<?=$poi['id']?>" oninput="recvUpdateMode(<?=$poi['id']?>)"></div>
+          <div class="form-group" style="margin:0"><label class="form-label text-xs">Enter Qty As</label>
+            <select class="form-control" name="batch[<?=$poi['id']?>][qty_mode]" id="recv_qm_<?=$poi['id']?>" onchange="recvUpdateMode(<?=$poi['id']?>)">
+              <option value="unit">Units</option>
+              <option value="strip">Strips</option>
+            </select></div>
+          <div class="form-group" style="margin:0"><label class="form-label text-xs" id="recv_qty_lbl_<?=$poi['id']?>">Qty Received (Units) <span class="req">*</span></label>
+            <input class="form-control" type="number" name="batch[<?=$poi['id']?>][qty]" id="recv_qty_<?=$poi['id']?>" value="<?=(int)($poi['quantity']??0)?>" min="1" required oninput="recvCalcQty(<?=$poi['id']?>)">
+            <div id="recv_qty_hint_<?=$poi['id']?>" class="form-hint" style="color:var(--teal);font-size:.75rem;margin-top:3px"></div></div>
+          <div class="form-group" style="margin:0"><label class="form-label text-xs">Purchase Price / Unit</label>
             <input class="form-control" type="number" step="0.01" min="0" name="batch[<?=$poi['id']?>][purchase_price]" value="<?=number_format((float)($poi['price']??0),2,'.','')?>" placeholder="Cost incl. GST"></div>
-          <div class="form-group" style="margin:0"><label class="form-label text-xs">MRP / Unit <span class="req">*</span></label>
-            <input class="form-control" type="number" step="0.01" min="0" name="batch[<?=$poi['id']?>][mrp]" value="<?=number_format((float)($poi['mrp']??$poi['price']??0),2,'.','')?>" placeholder="Retail price incl. GST"></div>
+          <div class="form-group" style="margin:0"><label class="form-label text-xs" id="recv_mrp_lbl_<?=$poi['id']?>">MRP / Unit <span class="req">*</span></label>
+            <input class="form-control" type="number" step="0.0001" min="0" name="batch[<?=$poi['id']?>][mrp]" id="recv_mrp_<?=$poi['id']?>" value="<?=number_format((float)($poi['mrp']??$poi['price']??0),2,'.','')?>" placeholder="Retail price incl. GST" oninput="recvCalcMrp(<?=$poi['id']?>)">
+            <div id="recv_mrp_hint_<?=$poi['id']?>" class="form-hint" style="color:var(--teal);font-size:.75rem;margin-top:3px"></div></div>
         </div>
       </div>
       <?php endforeach; endif;?>
@@ -336,6 +368,45 @@ adminHeader('Purchase Orders','purchase');
 <?php if(!empty($errors)):?><script>openModal('poModal');</script><?php endif;?>
 
 <script>
+// Strip/packing helpers for receive modal
+function recvUpdateMode(poiId){
+  var sqEl=document.getElementById('recv_sq_'+poiId);
+  var qmEl=document.getElementById('recv_qm_'+poiId);
+  var sq=sqEl?Math.max(1,parseInt(sqEl.value)||1):1;
+  var mode=qmEl?qmEl.value:'unit';
+  var qtyLbl=document.getElementById('recv_qty_lbl_'+poiId);
+  var mrpLbl=document.getElementById('recv_mrp_lbl_'+poiId);
+  if(qtyLbl) qtyLbl.innerHTML=(mode==='strip'&&sq>1?'Qty Received (Strips)':'Qty Received (Units)')+' <span class="req">*</span>';
+  if(mrpLbl) mrpLbl.innerHTML=(mode==='strip'&&sq>1?'MRP per Strip (auto-calc per unit)':'MRP / Unit')+' <span class="req">*</span>';
+  recvCalcQty(poiId); recvCalcMrp(poiId);
+}
+function recvCalcQty(poiId){
+  var sqEl=document.getElementById('recv_sq_'+poiId);
+  var qmEl=document.getElementById('recv_qm_'+poiId);
+  var qtyEl=document.getElementById('recv_qty_'+poiId);
+  var hint=document.getElementById('recv_qty_hint_'+poiId);
+  if(!sqEl||!qmEl||!qtyEl||!hint) return;
+  var sq=Math.max(1,parseInt(sqEl.value)||1);
+  var mode=qmEl.value;
+  var entered=parseInt(qtyEl.value)||0;
+  if(mode==='strip'&&sq>1&&entered>0){
+    hint.innerHTML=entered+' strips &times; '+sq+' = <strong>'+(entered*sq)+' units</strong> in stock';
+  } else { hint.innerHTML=''; }
+}
+function recvCalcMrp(poiId){
+  var sqEl=document.getElementById('recv_sq_'+poiId);
+  var qmEl=document.getElementById('recv_qm_'+poiId);
+  var mrpEl=document.getElementById('recv_mrp_'+poiId);
+  var hint=document.getElementById('recv_mrp_hint_'+poiId);
+  if(!sqEl||!qmEl||!mrpEl||!hint) return;
+  var sq=Math.max(1,parseInt(sqEl.value)||1);
+  var mode=qmEl.value;
+  var mrp=parseFloat(mrpEl.value)||0;
+  if(mode==='strip'&&sq>1&&mrp>0){
+    hint.innerHTML='Per unit: <strong>₹'+(mrp/sq).toFixed(4)+'</strong>';
+  } else { hint.innerHTML=''; }
+}
+
 // PO row management
 var _poIdx = 1;
 var _medOpts = <?=json_encode($medOptHtml)?>;
@@ -401,21 +472,27 @@ function buildReceiveForm(poId) {
         container.innerHTML = '<p class="text-sm text-muted">No items found. Please refresh and try again.</p>';
         return;
     }
+    var ptOpts = ['Blister','Alu-Alu','Strip','Bottle','Vial','Ampoule','Tube','Sachet','Jar','Box','Other'];
+    var ptHtml = '<option value="">— Select —</option>'+ptOpts.map(function(o){return '<option value="'+o+'">'+o+'</option>';}).join('');
     var html = '';
     poItems.forEach(function(poi){
         var med = _medMapData[poi.medicine_id] || {};
         var price = parseFloat(poi.price||0).toFixed(2);
         var mrpVal = parseFloat(poi.mrp||poi.price||0).toFixed(2);
+        var id = poi.id;
         html +=
             '<div style="border:1px solid var(--g3);border-radius:var(--rl);padding:14px;margin-bottom:12px;background:var(--g1)">' +
             '<div class="fw-600" style="margin-bottom:10px;color:var(--navy)">'+(med.name||'Medicine')+' <span style="color:var(--g5);font-size:.75rem;font-weight:400">— PO Qty: '+parseInt(poi.quantity||0)+'</span></div>' +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
-            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Batch Number <span class="req">*</span></label><input class="form-control" type="text" name="batch['+poi.id+'][batch_no]" placeholder="e.g. BA2026001" required></div>' +
-            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Qty Received <span class="req">*</span></label><input class="form-control" type="number" name="batch['+poi.id+'][qty]" value="'+parseInt(poi.quantity||0)+'" min="1" required></div>' +
-            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Expiry Date <span class="req">*</span></label><input class="form-control" type="date" name="batch['+poi.id+'][expiry_date]" required></div>' +
-            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Mfg. Date</label><input class="form-control" type="date" name="batch['+poi.id+'][mfg_date]"></div>' +
-            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Purchase Price / Unit <span class="req">*</span></label><input class="form-control" type="number" step="0.01" min="0" name="batch['+poi.id+'][purchase_price]" value="'+price+'" placeholder="Cost incl. GST"></div>' +
-            '<div class="form-group" style="margin:0"><label class="form-label text-xs">MRP / Unit <span class="req">*</span></label><input class="form-control" type="number" step="0.01" min="0" name="batch['+poi.id+'][mrp]" value="'+mrpVal+'" placeholder="Retail price incl. GST"></div>' +
+            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Batch Number <span class="req">*</span></label><input class="form-control" type="text" name="batch['+id+'][batch_no]" placeholder="e.g. BA2026001" required></div>' +
+            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Expiry Date <span class="req">*</span></label><input class="form-control" type="date" name="batch['+id+'][expiry_date]" required></div>' +
+            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Mfg. Date</label><input class="form-control" type="date" name="batch['+id+'][mfg_date]"></div>' +
+            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Packing Type</label><select class="form-control" name="batch['+id+'][packing_type]">'+ptHtml+'</select></div>' +
+            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Units per Strip</label><input class="form-control" type="number" name="batch['+id+'][strip_qty]" value="1" min="1" placeholder="e.g. 10" id="recv_sq_'+id+'" oninput="recvUpdateMode('+id+')"></div>' +
+            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Enter Qty As</label><select class="form-control" name="batch['+id+'][qty_mode]" id="recv_qm_'+id+'" onchange="recvUpdateMode('+id+')"><option value="unit">Units</option><option value="strip">Strips</option></select></div>' +
+            '<div class="form-group" style="margin:0"><label class="form-label text-xs" id="recv_qty_lbl_'+id+'">Qty Received (Units) <span class="req">*</span></label><input class="form-control" type="number" name="batch['+id+'][qty]" id="recv_qty_'+id+'" value="'+parseInt(poi.quantity||0)+'" min="1" required oninput="recvCalcQty('+id+')"><div id="recv_qty_hint_'+id+'" class="form-hint" style="color:var(--teal);font-size:.75rem;margin-top:3px"></div></div>' +
+            '<div class="form-group" style="margin:0"><label class="form-label text-xs">Purchase Price / Unit</label><input class="form-control" type="number" step="0.01" min="0" name="batch['+id+'][purchase_price]" value="'+price+'" placeholder="Cost incl. GST"></div>' +
+            '<div class="form-group" style="margin:0"><label class="form-label text-xs" id="recv_mrp_lbl_'+id+'">MRP / Unit <span class="req">*</span></label><input class="form-control" type="number" step="0.0001" min="0" name="batch['+id+'][mrp]" id="recv_mrp_'+id+'" value="'+mrpVal+'" placeholder="Retail price incl. GST" oninput="recvCalcMrp('+id+')"><div id="recv_mrp_hint_'+id+'" class="form-hint" style="color:var(--teal);font-size:.75rem;margin-top:3px"></div></div>' +
             '</div></div>';
     });
     container.innerHTML = html;

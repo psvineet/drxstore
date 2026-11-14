@@ -49,55 +49,6 @@ function addPORow(medOpts) {
     if (rows) rows.appendChild(div);
 }
 
-/* ── Batch loader for POS ── */
-function loadBatches() {
-    var med = document.getElementById('medicine_id');
-    var bat = document.getElementById('batch_id');
-    var st  = document.getElementById('stock_display');
-    var mr  = document.getElementById('mrp_display');
-    if (!med || !bat) return;
-    bat.innerHTML = '<option value="">Loading\u2026</option>';
-    if (st)  st.textContent = '\u2014';
-    if (mr) mr.textContent  = '\u2014';
-    if (!med.value) { bat.innerHTML = '<option value="">Select medicine first</option>'; return; }
-    fetch('index.php?p=get_batches&mid=' + encodeURIComponent(med.value))
-        .then(function (r) { return r.text(); })
-        .then(function (h) {
-            bat.innerHTML = h;
-            updateBatchInfo();
-            // Re-init searchable select for batch
-            if (bat._srchBuilt) {
-                bat._srchBuilt = false;
-                // Remove old wrap div
-                var wrap = bat.closest('.srch-sel-wrap');
-                if (wrap) {
-                    var parent = wrap.parentNode;
-                    parent.insertBefore(bat, wrap);
-                    wrap.remove();
-                }
-                // Remove old body panels for this select
-                document.querySelectorAll('.srch-sel-panel').forEach(function(el){
-                    if(!el.classList.contains('_srch-open')) el.remove();
-                });
-            }
-            if (window.buildSearchSelect) window.buildSearchSelect(bat);
-        })
-        .catch(function () { bat.innerHTML = '<option value="">Error loading batches</option>'; });
-}
-
-function updateBatchInfo() {
-    var bat = document.getElementById('batch_id');
-    var st  = document.getElementById('stock_display');
-    var mr  = document.getElementById('mrp_display');
-    var qty = document.getElementById('qty');
-    if (!bat) return;
-    var opt = bat.options[bat.selectedIndex];
-    var s = opt && opt.dataset ? opt.dataset.stock : '';
-    var m = opt && opt.dataset ? opt.dataset.mrp   : '';
-    if (st) st.textContent = s || '\u2014';
-    if (mr) mr.textContent = m ? '\u20b9' + parseFloat(m).toFixed(2) : '\u2014';
-    if (qty && s) qty.max = s;
-}
 
 /* ── Sidebar (global so onclick attributes can call these) ── */
 function openSidebar() {

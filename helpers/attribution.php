@@ -1,6 +1,6 @@
 <?php
 /**
- * DRXStore v2.0.0 - Attribution Protection System
+ * DRXStore v3.1.0 - Attribution Protection System
  * Developed by Vineet | ci.vps@proton.me
  *
  * Multi-layer mechanism:
@@ -15,14 +15,15 @@
 
 define('_AUTHOR_RAW',  'Vineet');
 define('_AUTHOR_EMAIL','ci.vps@proton.me');
-define('_BUILD_SIG',   'DRXStore-v2.0.0-by-Vineet');
+// _BUILD_SIG always reflects the installed APP_VERSION — auto-updated on every upgrade
+define('_BUILD_SIG',   'DRXStore-v' . (defined('APP_VERSION') ? APP_VERSION : '0.0.0') . '-by-Vineet');
 
-// Canonical strings — changing these triggers the protection
+// Canonical strings — version field uses APP_VERSION so it tracks upgrades automatically
 define('_ATTR_CANONICAL', serialize([
     'author'  => 'Vineet',
     'email'   => 'ci.vps@proton.me',
     'product' => 'DRXStore',
-    'version' => '1.0',
+    'version' => (defined('APP_VERSION') ? APP_VERSION : '0.0.0'),
 ]));
 
 // Hash of the canonical attribution — stored at first boot

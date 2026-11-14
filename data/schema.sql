@@ -1,5 +1,5 @@
 -- ============================================================
--- DRXStore v2.0.0 — Full MySQL Schema
+-- DRXStore v3.1.0 — Full MySQL Schema
 -- Developed by Vineet | ci.vps@proton.me
 -- Auto-generated from MySQLDB::tableSchema()
 -- Run this to create all tables on a fresh database.
@@ -79,12 +79,26 @@ CREATE TABLE IF NOT EXISTS `batches` (
   `mfg_date` DATE,
   `expiry_date` DATE,
   `quantity` INT DEFAULT 0,
-  `purchase_price` DECIMAL(10,2),
-  `mrp` DECIMAL(10,2),
+  `purchase_price` DECIMAL(10,4),
+  `mrp` DECIMAL(10,4),
   `supplier_id` INT,
+  `strip_qty` INT DEFAULT 1,
+  `packing_type` VARCHAR(50),
   `updated_at` DATETIME,
   `created_at` DATETIME
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── v3.1.0 migration: run this block when upgrading from v3.0.x ─────────────
+-- MySQLDB::migrate() handles these automatically on boot.
+-- For manual upgrades or external tools, run these statements once:
+ALTER TABLE `batches` MODIFY COLUMN `mrp` DECIMAL(10,4);
+ALTER TABLE `batches` ADD COLUMN IF NOT EXISTS `strip_qty` INT DEFAULT 1;
+ALTER TABLE `batches` ADD COLUMN IF NOT EXISTS `packing_type` VARCHAR(50);
+ALTER TABLE `sales_items` MODIFY COLUMN `mrp` DECIMAL(10,4);
+ALTER TABLE `po_items` MODIFY COLUMN `mrp` DECIMAL(10,4);
+
+-- ── v3.1.1 migration: run this block when upgrading from v3.1.0 ─────────────
+ALTER TABLE `batches` MODIFY COLUMN `purchase_price` DECIMAL(10,4);
 
 -- ── Suppliers ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS `suppliers` (
@@ -161,7 +175,7 @@ CREATE TABLE IF NOT EXISTS `sales_items` (
   `medicine_id` INT,
   `batch_id` INT,
   `quantity` INT,
-  `mrp` DECIMAL(10,2),
+  `mrp` DECIMAL(10,4),
   `price` DECIMAL(12,2)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -186,7 +200,7 @@ CREATE TABLE IF NOT EXISTS `po_items` (
   `medicine_id` INT,
   `quantity` INT,
   `price` DECIMAL(10,2),
-  `mrp` DECIMAL(10,2),
+  `mrp` DECIMAL(10,4),
   `received_qty` INT DEFAULT 0,
   `updated_at` DATETIME
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -349,4 +363,10 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 -- ============================================================
 -- Schema complete. Tables auto-migrate on first boot via MySQLDB.
+-- v3.1.0 changes:
+--   batches.mrp        DECIMAL(10,2) → DECIMAL(10,4) for accurate per-unit MRP
+--   batches.strip_qty  INT DEFAULT 1 (new — units per strip/pack)
+--   batches.packing_type VARCHAR(50) (new — Blister/Alu-Alu/Strip/Bottle/etc.)
+--   sales_items.mrp    DECIMAL(10,2) → DECIMAL(10,4)
+--   po_items.mrp       DECIMAL(10,2) → DECIMAL(10,4)
 -- ============================================================

@@ -85,7 +85,9 @@ class Mailer {
             $r = '';
             while (($line = fgets($socket, 512)) !== false) {
                 $r .= $line;
-                if ($line[3] === ' ') break; // End of multi-line response
+                // End of multi-line response: 4th char is space (e.g. "250 OK")
+                // Guard strlen to avoid undefined offset on truncated/empty lines
+                if (strlen($line) >= 4 && $line[3] === ' ') break;
             }
             return $r;
         };
@@ -93,18 +95,25 @@ class Mailer {
             fputs($socket, $cmd . "\r\n");
         };
 
+        // Use server hostname as EHLO domain when available, else localhost
+        $ehloHost = !empty($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'localhost';
+
         try {
             $recv(); // Greeting
-            $send("EHLO localhost");
+            $send("EHLO {$ehloHost}");
             $r = $recv();
 
-            // STARTTLS upgrade for port 587
+            // STARTTLS upgrade — only when secure=tls and server advertises it.
+            // secure=ssl already uses a wrapped connection above (no STARTTLS needed).
+            // secure=none skips encryption entirely (plain SMTP, not recommended).
             if ($secure === 'tls' && strpos($r, 'STARTTLS') !== false) {
                 $send("STARTTLS");
-                $recv();
-                stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
-                $send("EHLO localhost");
-                $recv();
+                $stlsR = $recv();
+                if (strpos($stlsR, '220') !== false) {
+                    stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+                    $send("EHLO {$ehloHost}");
+                    $recv();
+                }
             }
 
             // AUTH LOGIN
@@ -151,9 +160,11 @@ class Mailer {
             $body .= chunk_split(base64_encode($htmlBody)) . "\r\n";
             $body .= "--{$boundary}--\r\n";
 
-            $message = $headers . "\r\n" . $body . "\r\n.\r\n";
-            // Escape lines starting with dot
-            $message = preg_replace('/^\./', '..', $message);
+            // RFC 5321 dot-stuffing: must run on headers+body BEFORE appending
+            // the DATA terminator "\r\n.\r\n", otherwise the terminal dot itself
+            // gets doubled. The /m flag makes ^ match at every line start.
+            $message = preg_replace('/^\./m', '..', $headers . "\r\n" . $body);
+            $message .= "\r\n.\r\n";
             fputs($socket, $message);
             $sendR = $recv();
 

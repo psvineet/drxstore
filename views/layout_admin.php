@@ -56,6 +56,7 @@ function _navItem(string $page, string $label, string $icon, string $active, int
         'logout'    => '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
         'mail'      => '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/>',
         'message'   => '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+        'update'    => '<polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>',
     ];
     $svg = $icons[$icon] ?? '';
     $niHtml = $svg
@@ -121,7 +122,7 @@ function adminHeader(string $title, string $activePage = ''): void {
     echo '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' . "\n";
     echo '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">' . "\n";
     echo '<link rel="stylesheet" href="' . assetUrl('assets/css/app.css') . '">' . "\n";
-    echo '<link rel="icon" href="data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><rect width=\'100\' height=\'100\' rx=\'20\' fill=\'%230a2342\'/><text y=\'.88em\' x=\'.1em\' font-size=\'75\' fill=\'white\'>Rx</text></svg>">' . "\n";
+    echo '<link rel="icon" href="data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><rect width=\'100\' height=\'100\' rx=\'20\' fill=\'%230a2342\'/><text y=\'.88em\' x=\'.1em\' font-size=\'75\' fill=\'white\'>Dx</text></svg>">' . "\n";
     echo '</head><body><div class="app-layout"><div class="mob-overlay" id="mobOverlay"></div>' . "\n";
 
     // Sidebar

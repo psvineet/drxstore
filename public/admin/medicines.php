@@ -1,6 +1,6 @@
 <?php
 /**
- * DRXStore - Medicines with inline Import (CSV/XLSX) + Other category
+ * DRXStore - Medicines with inline Import (CSV only)
  * Developed by Vineet
  */
 if (!defined('ROOT')) define('ROOT', dirname(dirname(dirname(__FILE__))));
@@ -61,14 +61,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
             try {
                 if ($ext === 'csv' || $ext === 'txt') {
                     $importPreview = parseCsvMedicines($f['tmp_name']);
-                } elseif ($ext === 'xlsx' || $ext === 'xls') {
-                    if (!class_exists('ZipArchive')) {
-                        $errors[] = 'XLSX import requires the PHP zip extension (not installed on this server). Please upload a CSV file instead.';
-                    } else {
-                        $importPreview = parseXlsxMedicines($f['tmp_name']);
-                    }
                 } else {
-                    $errors[] = 'Invalid file format. Only .csv or .xlsx files are accepted.';
+                    $errors[] = 'Invalid file format. Only .csv files are accepted.';
                 }
             } catch (Throwable $ex) {
                 $errors[] = 'Could not parse file: ' . $ex->getMessage();
@@ -125,6 +119,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
 if (get('action')==='sample_csv_dl') {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="medicines_sample.csv"');
+    // UTF-8 BOM so Excel opens without mojibake
+    echo "\xEF\xBB\xBF";
     echo "name,generic,company,category,hsn,gst,rack\r\n";
     $sampleRows=[['Paracetamol 500mg','Acetaminophen','Sun Pharma','Tablet','30049099','12','A-1'],['Amoxicillin 250mg','Amoxicillin','Cipla','Capsule','30041099','12','B-3'],['Omeprazole 20mg','Omeprazole','Mankind','Capsule','30049099','12','C-2']];
     foreach($sampleRows as $sr) echo implode(',', $sr)."\r\n";
@@ -166,9 +162,36 @@ $edit=null; if(get('action')==='edit'&&getInt('id'))$edit=$db->findOne('medicine
 startSession();
 if(!empty($_SESSION['med_import'])&&empty($importPreview))$importPreview=$_SESSION['med_import'];
 
+// ── EXPORT CSV ────────────────────────────────────────────────────
+if (get('action') === 'export_csv') {
+    $allMeds = $db->table('medicines');
+    usort($allMeds, fn($a,$b) => strcasecmp($a['name'], $b['name']));
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="medicines_export_'.date('Ymd').'.csv"');
+    // UTF-8 BOM so Excel opens without mojibake
+    echo "\xEF\xBB\xBF";
+    $fp = fopen('php://output', 'w');
+    // Headers match the import template column order exactly
+    fputcsv($fp, ['name','generic','company','category','hsn','gst','rack','description']);
+    foreach($allMeds as $m) {
+        fputcsv($fp, [
+            $m['name']          ?? '',
+            $m['generic_name']  ?? '',
+            $m['company']       ?? '',
+            $m['category']      ?? '',
+            $m['hsn_code']      ?? '',
+            isset($m['gst_percent']) ? (float)$m['gst_percent'] : 12,
+            $m['rack_location'] ?? '',
+            $m['description']   ?? '',
+        ]);
+    }
+    fclose($fp);
+    exit;
+}
+
 // ── Helper: parse CSV ─────────────────────────────────────────────
 function parseCsvMedicines(string $path): array {
-    $rows=[]; $importErrors=[];
+    $rows=[];
     // Read entire file, strip UTF-8 BOM (Excel adds \xEF\xBB\xBF), normalise line endings
     $raw = file_get_contents($path);
     if ($raw === false) return [];
@@ -205,175 +228,6 @@ function parseCsvMedicines(string $path): array {
     fclose($handle); @unlink($tmp); return $rows;
 }
 
-// ── Helper: parse XLSX (basic, no external library) ───────────────
-function parseXlsxMedicines(string $path): array {
-    // XLSX is a ZIP file containing XML
-    $zip=new ZipArchive(); if($zip->open($path)!==true)return[];
-    $sharedXml=$zip->getFromName('xl/sharedStrings.xml');
-    $sheetXml=$zip->getFromName('xl/worksheets/sheet1.xml');
-    $zip->close();
-    if(!$sheetXml)return[];
-    // Parse shared strings
-    $strings=[];
-    if($sharedXml){
-        preg_match_all('/<si>.*?<t[^>]*>([^<]*)<\/t>.*?<\/si>/s',$sharedXml,$m);
-        $strings=$m[1]??[];
-    }
-    // Parse sheet rows
-    $rows=[]; $header=[];
-    preg_match_all('/<row[^>]*>(.*?)<\/row>/s',$sheetXml,$rowMatches);
-    foreach($rowMatches[1] as $ri=>$rowXml){
-        preg_match_all('/<c[^>]*r="([A-Z]+)\d+"[^>]*(?:t="([^"]*)")?[^>]*>.*?<v>(\d+)<\/v>.*?<\/c>|<c[^>]*r="([A-Z]+)\d+"[^>]*>.*?<v>([^<]*)<\/v>.*?<\/c>/s',$rowXml,$cells,PREG_SET_ORDER);
-        $rowData=[];
-        foreach($cells as $cell){
-            $col=$cell[1]?:$cell[4]; $type=$cell[2]??''; $val=$cell[3]?:$cell[5];
-            if($type==='s'&&isset($strings[(int)$val]))$val=html_entity_decode($strings[(int)$val]);
-            $rowData[$col]=$val;
-        }
-        if(empty($rowData))continue;
-        // Convert column letters to array
-        ksort($rowData); $vals=array_values($rowData);
-        if($ri===0){$header=array_map('strtolower',$vals);continue;}
-        if(empty($vals[0]))continue;
-        $map=[]; foreach($header as $i=>$h)$map[$h]=$vals[$i]??'';
-        $name=$map['name']??$map['medicine_name']??$vals[0]??'';
-        if(!trim($name))continue;
-        $rows[]=['name'=>trim($name),'generic'=>trim($map['generic']??$map['generic_name']??''),'company'=>trim($map['company']??$map['manufacturer']??''),'category'=>trim($map['category']??''),'hsn'=>trim($map['hsn']??$map['hsn_code']??''),'gst'=>is_numeric($g=$map['gst']??$map['gst_percent']??'12')?(float)$g:12,'rack'=>trim($map['rack']??$map['rack_location']??'')];
-    }
-    return $rows;
-}
-
-// ── EXPORT CSV ────────────────────────────────────────────────────
-if (get('action') === 'export_csv') {
-    $allMeds = $db->table('medicines');
-    usort($allMeds, fn($a,$b) => strcasecmp($a['name'], $b['name']));
-    header('Content-Type: text/csv; charset=UTF-8');
-    header('Content-Disposition: attachment; filename="medicines_export_'.date('Ymd').'.csv"');
-    // Correct UTF-8 BOM (3 raw bytes) so Excel opens without mojibake
-    echo "\xEF\xBB\xBF";
-    $fp = fopen('php://output', 'w');
-    // Headers match the import template column order exactly
-    fputcsv($fp, ['name','generic','company','category','hsn','gst','rack','description']);
-    foreach($allMeds as $m) {
-        fputcsv($fp, [
-            $m['name']          ?? '',
-            $m['generic_name']  ?? '',
-            $m['company']       ?? '',
-            $m['category']      ?? '',
-            $m['hsn_code']      ?? '',
-            isset($m['gst_percent']) ? (float)$m['gst_percent'] : 12,
-            $m['rack_location'] ?? '',
-            $m['description']   ?? '',
-        ]);
-    }
-    fclose($fp);
-    exit;
-}
-
-// ── EXPORT XLSX ───────────────────────────────────────────────────
-if (get('action') === 'export_xlsx') {
-    $allMeds = $db->table('medicines');
-    usort($allMeds, fn($a,$b) => strcasecmp($a['name'], $b['name']));
-    $rows = [['Name','Generic Name','Company','Category','HSN Code','GST %','Rack Location','Description']];
-    foreach($allMeds as $m) {
-        $rows[] = [
-            $m['name'] ?? '',
-            $m['generic_name'] ?? '',
-            $m['company'] ?? '',
-            $m['category'] ?? '',
-            $m['hsn_code'] ?? '',
-            $m['gst_percent'] ?? 12,
-            $m['rack_location'] ?? '',
-            $m['description'] ?? '',
-        ];
-    }
-    // Build minimal XLSX using ZipArchive
-    $tmpXlsx = tempnam(sys_get_temp_dir(), 'drx') . '.xlsx';
-    $zip = new ZipArchive();
-    $zip->open($tmpXlsx, ZipArchive::CREATE | ZipArchive::OVERWRITE);
-    // [Content_Types].xml
-    $zip->addFromString('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>');
-    // _rels/.rels
-    $zip->addFromString('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
-    // xl/_rels/workbook.xml.rels
-    $zip->addFromString('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
-    // xl/workbook.xml
-    $zip->addFromString('xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Medicines" sheetId="1" r:id="rId1"/></sheets></workbook>');
-    // Build shared strings & sheet data
-    $strings = []; $strIdx = [];
-    $getIdx = function($val) use (&$strings, &$strIdx) {
-        $val = (string)$val;
-        if (!isset($strIdx[$val])) { $strIdx[$val] = count($strings); $strings[] = $val; }
-        return $strIdx[$val];
-    };
-    // styles.xml — 2 cell styles: 0 = normal, 1 = bold header with light-blue fill
-    $zip->addFromString('xl/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        . '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        . '<fonts count="2">'
-        .   '<font><sz val="11"/><name val="Calibri"/></font>'                   // 0 normal
-        .   '<font><b/><sz val="11"/><name val="Calibri"/></font>'               // 1 bold
-        . '</fonts>'
-        . '<fills count="3">'
-        .   '<fill><patternFill patternType="none"/></fill>'
-        .   '<fill><patternFill patternType="gray125"/></fill>'
-        .   '<fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/></patternFill></fill>'  // 2 blue header fill
-        . '</fills>'
-        . '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
-        . '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-        . '<cellXfs count="2">'
-        .   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'    // style 0: normal
-        .   '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' // style 1: bold + blue
-        . '</cellXfs>'
-        . '</styleSheet>');
-
-    // Build sheet XML: header row uses style 1 (bold+fill), data rows use style 0
-    $sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        . '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
-        . '<cols>'
-        .   '<col min="1" max="1" width="28" customWidth="1"/>'   // Name
-        .   '<col min="2" max="2" width="24" customWidth="1"/>'   // Generic
-        .   '<col min="3" max="3" width="20" customWidth="1"/>'   // Company
-        .   '<col min="4" max="4" width="16" customWidth="1"/>'   // Category
-        .   '<col min="5" max="5" width="14" customWidth="1"/>'   // HSN
-        .   '<col min="6" max="6" width="8"  customWidth="1"/>'   // GST
-        .   '<col min="7" max="7" width="14" customWidth="1"/>'   // Rack
-        .   '<col min="8" max="8" width="36" customWidth="1"/>'   // Description
-        . '</cols>'
-        . '<sheetData>';
-    $cols = ['A','B','C','D','E','F','G','H'];
-    foreach($rows as $ri => $row) {
-        $isHeader = ($ri === 0);
-        $styleAttr = $isHeader ? ' s="1"' : '';
-        $sheetXml .= '<row r="'.($ri+1).'"' . ($isHeader ? ' customHeight="1" ht="18"' : '') . '>';
-        foreach($row as $ci => $cell) {
-            $col = $cols[$ci] ?? chr(65+$ci);
-            $ref = $col.($ri+1);
-            if (!$isHeader && is_numeric($cell) && !str_starts_with((string)$cell, '0')) {
-                $sheetXml .= '<c r="'.$ref.'" t="n"'.$styleAttr.'><v>'.htmlspecialchars((string)$cell,ENT_XML1).'</v></c>';
-            } else {
-                $idx = $getIdx($cell);
-                $sheetXml .= '<c r="'.$ref.'" t="s"'.$styleAttr.'><v>'.$idx.'</v></c>';
-            }
-        }
-        $sheetXml .= '</row>';
-    }
-    $sheetXml .= '</sheetData></worksheet>';
-    $zip->addFromString('xl/worksheets/sheet1.xml', $sheetXml);
-    // sharedStrings.xml
-    $ssXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'.count($strings).'" uniqueCount="'.count($strings).'">';
-    foreach($strings as $s) $ssXml .= '<si><t xml:space="preserve">'.htmlspecialchars($s,ENT_XML1).'</t></si>';
-    $ssXml .= '</sst>';
-    $zip->addFromString('xl/sharedStrings.xml', $ssXml);
-    $zip->close();
-    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="medicines_export_'.date('Ymd').'.xlsx"');
-    header('Content-Length: '.filesize($tmpXlsx));
-    readfile($tmpXlsx);
-    unlink($tmpXlsx);
-    exit;
-}
-
 
 adminHeader('Medicines','medicines');
 // Reload categories (may have just added a custom one)
@@ -382,20 +236,9 @@ $cats=array_column($db->table('categories'),'name'); sort($cats);
 <div class="page-hdr">
   <div><div class="page-title">Medicines</div><div class="page-sub"><?=$db->count('medicines')?> registered</div></div>
   <div class="page-actions">
-    <div style="position:relative;display:inline-block" id="exportWrap">
-      <button class="btn btn-ghost" onclick="toggleExportMenu()" type="button">
-        <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" style="vertical-align:middle;margin-right:4px"><path d="M3 17h14M10 3v10M6 9l4 4 4-4"/></svg>Export
-        <svg viewBox="0 0 12 8" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-left:2px"><polyline points="1 1 6 7 11 1"/></svg>
-      </button>
-      <div id="exportMenu" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:#fff;border:1.5px solid var(--navy);border-radius:var(--rl);box-shadow:0 6px 20px rgba(10,35,66,.13);z-index:9999;min-width:160px;overflow:hidden">
-        <a href="index.php?p=medicines&action=export_csv" style="display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:.82rem;color:var(--g8);text-decoration:none;border-bottom:1px solid var(--g2)" onmouseover="this.style.background='var(--g1)'" onmouseout="this.style.background=''">
-          <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17h14M10 3v10M6 9l4 4 4-4"/></svg>Export as CSV
-        </a>
-        <a href="index.php?p=medicines&action=export_xlsx" style="display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:.82rem;color:var(--g8);text-decoration:none" onmouseover="this.style.background='var(--g1)'" onmouseout="this.style.background=''">
-          <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17h14M10 3v10M6 9l4 4 4-4"/></svg>Export as Excel
-        </a>
-      </div>
-    </div>
+    <a href="index.php?p=medicines&action=export_csv" class="btn btn-ghost">
+      <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" style="vertical-align:middle;margin-right:4px"><path d="M3 17h14M10 3v10M6 9l4 4 4-4"/></svg>Export CSV
+    </a>
     <button class="btn btn-ghost" onclick="toggleImport()">
       <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" style="vertical-align:middle;margin-right:4px"><path d="M3 3h14M10 17V7M6 11l4-4 4 4"/></svg>Import
     </button>
@@ -408,7 +251,7 @@ $cats=array_column($db->table('categories'),'name'); sort($cats);
 <!-- ── Inline Import Panel ── -->
 <div id="importPanel" style="display:<?=!empty($importPreview)?'block':'none'?>;margin-bottom:16px">
 <div class="card">
-  <div class="card-hdr"><div class="card-title">Import Medicines from CSV or XLSX</div><button type="button" class="btn btn-ghost btn-sm" onclick="toggleImport()">Close</button></div>
+  <div class="card-hdr"><div class="card-title">Import Medicines from CSV</div><button type="button" class="btn btn-ghost btn-sm" onclick="toggleImport()">Close</button></div>
   <div class="card-body">
     <?php
     // Show GST warnings if any
@@ -422,7 +265,7 @@ $cats=array_column($db->table('categories'),'name'); sort($cats);
     <form method="POST" enctype="multipart/form-data">
       <?=csrfField()?><input type="hidden" name="action" value="import_preview">
       <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;flex-wrap:wrap">
-        <div class="form-group" style="margin:0"><label class="form-label">Select File (CSV or XLSX) <span class="req">*</span></label><input class="form-control" type="file" name="import_file" accept=".csv,.xlsx,.xls,.txt" required></div>
+        <div class="form-group" style="margin:0"><label class="form-label">Select CSV File <span class="req">*</span></label><input class="form-control" type="file" name="import_file" accept=".csv,.txt" required></div>
         <button type="submit" class="btn btn-primary">&#128269; Preview</button>
       </div>
       <div class="form-hint" style="margin-top:8px">
@@ -559,14 +402,6 @@ $cats=array_column($db->table('categories'),'name'); sort($cats);
 <?php /* importPanel display is now PHP-controlled (display:block when preview exists) */ ?>
 
 <script>
-function toggleExportMenu(){
-  var m=document.getElementById('exportMenu');
-  m.style.display=m.style.display==='none'?'block':'none';
-}
-document.addEventListener('click',function(e){
-  var w=document.getElementById('exportWrap');
-  if(w&&!w.contains(e.target)) document.getElementById('exportMenu').style.display='none';
-});
 function toggleImport(){
   var p=document.getElementById('importPanel');
   p.style.display=p.style.display==='none'?'block':'none';

@@ -30,7 +30,13 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     }
 
     if($act==='smtp'){
-        $data=['smtp_host'=>post('smtp_host'),'smtp_port'=>postInt('smtp_port',587),'smtp_user'=>post('smtp_user'),'smtp_from'=>post('smtp_from'),'smtp_name'=>post('smtp_name'),'smtp_secure'=>post('smtp_secure','tls'),'updated_at'=>date('Y-m-d H:i:s')];
+        // Whitelist smtp_secure to prevent arbitrary values being stored/used
+        $smtpSecureRaw = post('smtp_secure', 'tls');
+        $smtpSecure = in_array($smtpSecureRaw, ['tls', 'ssl', 'none'], true) ? $smtpSecureRaw : 'tls';
+        // Validate smtp_from is a real email address
+        $smtpFrom = post('smtp_from');
+        if ($smtpFrom && !filter_var($smtpFrom, FILTER_VALIDATE_EMAIL)) $smtpFrom = '';
+        $data=['smtp_host'=>post('smtp_host'),'smtp_port'=>postInt('smtp_port',587),'smtp_user'=>post('smtp_user'),'smtp_from'=>$smtpFrom,'smtp_name'=>post('smtp_name'),'smtp_secure'=>$smtpSecure,'updated_at'=>date('Y-m-d H:i:s')];
         // Preserve all store/general fields when saving SMTP
         foreach(['store_name','store_address','store_phone','store_email','store_gst','store_dl','currency','low_qty','expiry_days','storage','setup_done'] as $f) {
             if(isset($cfg[$f])) $data[$f]=$cfg[$f];
@@ -176,8 +182,49 @@ if(isset($cfg['currency'])){
     }
 }
 
+// ── JSON Backup ──────────────────────────────────────────────────
+if(get('action')==='backup_json'){
+    verifyCsrfGet();
+    try {
+        $backupDir = DATA_DIR.'/backups';
+        if(!is_dir($backupDir)) mkdir($backupDir, 0755, true);
+        $filename = 'drxstore_json_backup_'.date('Ymd_His').'.zip';
+        $tmpFile  = $backupDir.'/'.$filename;
+        $zip = new ZipArchive();
+        if($zip->open($tmpFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true){
+            throw new Exception('Cannot create ZIP file. Check data/ directory permissions.');
+        }
+        $jsonFiles = glob(DATA_DIR.'/*.json') ?: [];
+        foreach($jsonFiles as $jf){ $zip->addFile($jf, basename($jf)); }
+        // Also preserve state files
+        foreach(['.setup_token','.attr_marker'] as $sf){
+            $fp = DATA_DIR.'/'.$sf;
+            if(file_exists($fp)) $zip->addFile($fp, $sf);
+        }
+        $count = $zip->numFiles;
+        $zip->close();
+        if(!file_exists($tmpFile) || filesize($tmpFile) < 22){
+            throw new Exception('No JSON data files found in data/ directory.');
+        }
+        // Stream download
+        if(ob_get_length()) ob_clean();
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="'.$filename.'"');
+        header('Content-Length: '.filesize($tmpFile));
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        header('Pragma: no-cache');
+        readfile($tmpFile);
+        @unlink($tmpFile); // remove temp — user has the download
+        exit;
+    } catch(Exception $ex){
+        setFlash('danger','JSON Backup failed: '.$ex->getMessage());
+        header('Location: index.php?p=settings'); exit;
+    }
+}
+
 // ── MySQL Backup ────────────────────────────────────────────────
 if(get('action')==='backup_mysql'){
+    verifyCsrfGet();
     $dbCfgFile = DATA_DIR.'/db_config.json';
     if(!file_exists($dbCfgFile)||($cfg['storage']??'json')!=='mysql'){
         setFlash('danger','Backup is only available for MySQL storage.');
@@ -691,7 +738,7 @@ adminHeader('Settings','settings');
       <div style="margin-bottom:16px">
         <div style="font-size:.82rem;font-weight:600;color:var(--navy);margin-bottom:6px">Backup</div>
         <div style="font-size:.81rem;color:var(--g6);margin-bottom:10px">Exports full database as SQL — compatible with phpMyAdmin &amp; mysqldump. No <code>CREATE DATABASE</code> — works on shared hosts.</div>
-        <a href="index.php?p=settings&action=backup_mysql" class="btn btn-primary btn-sm">
+        <a href="<?=csrfUrl('index.php?p=settings&action=backup_mysql')?>" class="btn btn-primary btn-sm">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Download Full Backup (.sql)
         </a>
@@ -716,10 +763,21 @@ adminHeader('Settings','settings');
         </form>
       </div>
       <?php else: ?>
-      <div class="alert alert-info" style="margin-bottom:14px"><span class="alert-body">
-        You are using <strong>JSON file storage</strong>. Your data is in the <code>data/</code> folder.<br>
-        To switch to MySQL and migrate all your data, use the migration tool below.
-      </span></div>
+      <!-- JSON Backup -->
+      <div style="margin-bottom:16px">
+        <div style="font-size:.82rem;font-weight:600;color:var(--navy);margin-bottom:6px">Backup</div>
+        <div style="font-size:.81rem;color:var(--g6);margin-bottom:10px">Downloads all your JSON data files as a ZIP archive. Store it safely — this is your full data backup.</div>
+        <a href="<?=csrfUrl('index.php?p=settings&action=backup_json')?>" class="btn btn-primary btn-sm">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:middle"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download JSON Backup (.zip)
+        </a>
+      </div>
+      <div style="padding-top:16px;border-top:1px solid var(--g3);margin-bottom:14px">
+        <div class="alert alert-info"><span class="alert-body">
+          You are using <strong>JSON file storage</strong>. Your data is in the <code>data/</code> folder.<br>
+          To switch to MySQL and migrate all your data, use the migration tool below.
+        </span></div>
+      </div>
       <div style="border:1.5px solid var(--navy);border-radius:var(--rl);overflow:hidden">
         <div style="padding:12px 16px;background:var(--navy);color:#fff;font-size:.84rem;font-weight:600">
           Migrate JSON Data to MySQL
@@ -763,7 +821,7 @@ adminHeader('Settings','settings');
     <div class="card-body">
       <div style="margin-bottom:12px">
         <div style="font-size:.86rem;font-weight:600;color:var(--navy);margin-bottom:4px"><?=APP_NAME?> v<?=APP_VERSION?> installed</div>
-        <div style="font-size:.79rem;color:var(--g6);line-height:1.55">Upload a new release ZIP to update. Your data, database and settings are never touched during update.</div>
+        <div style="font-size:.79rem;color:var(--g6);line-height:1.55">Check for updates directly from the official GitHub release. Downloads are verified with SHA256 and your data, database and settings are never touched during an update.</div>
       </div>
       <a href="index.php?p=sw_update" class="btn btn-primary btn-sm">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>

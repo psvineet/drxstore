@@ -301,7 +301,7 @@ Amoxicillin 250mg,Amoxicillin,Cipla,Capsule,30041099,12,B-3</div>
       <?php endforeach; ?>
       <?php if (count($preview) > 100): ?>
       <tr><td colspan="8" class="tc text-sm text-muted" style="padding:10px">
-        … and <?=count($preview)-100?> more rows (all will be imported)
+        ... and <?=count($preview)-100?> more rows (all will be imported)
       </td></tr>
       <?php endif; ?>
       </tbody>
@@ -337,14 +337,15 @@ Amoxicillin 250mg,Amoxicillin,Cipla,Capsule,30041099,12,B-3</div>
         var mb = (this.files[0].size / 1024 / 1024).toFixed(2);
         fi.style.display = 'block';
         fi.innerHTML = '<strong>' + this.files[0].name + '</strong> &mdash; ' + mb + ' MB';
-        btn.textContent = 'Preview Import';
+        // Use innerHTML so the SVG icon inside the button is preserved
+        btn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Preview Import';
       }
     });
   }
   var form = document.getElementById('uploadForm');
   if (form) {
     form.addEventListener('submit', function(){
-      if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Uploading...'; }
     });
   }
 })();

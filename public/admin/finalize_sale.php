@@ -71,6 +71,17 @@ $chequeNo  = post('cheque_no', $cart[0]['cheque_no'] ?? '');
 $chequeBank= post('cheque_bank', $cart[0]['cheque_bank'] ?? '');
 $chequeDate= post('cheque_date', $cart[0]['cheque_date'] ?? '') ?: null;
 
+// Wrap the entire sale write in a transaction (MySQL only) to prevent
+// race conditions where two simultaneous sales could oversell the same batch.
+$useTransaction = ($db instanceof MySQLDB);
+if ($useTransaction) {
+    try {
+        $db->pdo()->beginTransaction();
+    } catch (Exception $e) {
+        $useTransaction = false; // fall back to non-transactional
+    }
+}
+
 // Insert sale
 $saleId = $db->insert('sales', [
     'customer_id'     => $custId,
@@ -122,6 +133,15 @@ foreach ($cart as $item) {
             'user_id'    => $_SESSION['admin_id'] ?? 0,
             'created_at' => date('Y-m-d H:i:s'),
         ]);
+    }
+}
+
+// Commit transaction — all sale inserts and stock deductions succeeded
+if ($useTransaction) {
+    try { $db->pdo()->commit(); } catch (Exception $e) {
+        $db->pdo()->rollBack();
+        setFlash('danger', 'Sale failed due to a database error. Please try again.');
+        header('Location: index.php?p=sales'); exit;
     }
 }
 

@@ -38,6 +38,87 @@ const GITHUB_RAW_HOST = 'objects.githubusercontent.com'; // GitHub's CDN for rel
 const GITHUB_API_HOST = 'api.github.com';       // zipball_url / tarball_url fallback
 const UPDATE_TMP_DIR  = DATA_DIR . '/.update_tmp'; // temporary extraction dir
 
+// ── Pre-upgrade backup ────────────────────────────────────────────────────────
+/**
+ * Create a full backup before applying any update.
+ * - JSON mode: ZIPs every *.json file in data/ into data/backups/
+ * - MySQL mode: dumps every table as INSERT SQL into data/backups/
+ * Returns the backup file path, or throws RuntimeException on failure.
+ */
+function preUpgradeBackup(string $fromVersion, string $toVersion): string {
+    $backupDir = DATA_DIR . '/backups';
+    if (!is_dir($backupDir) && !mkdir($backupDir, 0755, true)) {
+        throw new RuntimeException('Cannot create backup directory: ' . $backupDir);
+    }
+
+    $stamp    = date('Ymd_His');
+    $label    = 'pre_upgrade_' . $fromVersion . '_to_' . toVersionSlug($toVersion) . '_' . $stamp;
+    $dbCfgFile = DATA_DIR . '/db_config.json';
+    $isMySQL   = false;
+    if (file_exists($dbCfgFile)) {
+        $cfg = json_decode(file_get_contents($dbCfgFile), true) ?? [];
+        $isMySQL = ($cfg['driver'] ?? 'json') === 'mysql';
+    }
+
+    if ($isMySQL) {
+        // MySQL dump
+        $backupFile = $backupDir . '/' . $label . '.sql';
+        global $db;
+        $lines   = [];
+        $lines[] = '-- DRXStore Pre-Upgrade MySQL Backup';
+        $lines[] = '-- From: v' . $fromVersion . '  To: v' . $toVersion;
+        $lines[] = '-- Generated: ' . date('Y-m-d H:i:s');
+        $lines[] = '-- ' . str_repeat('=', 60);
+        $lines[] = 'SET NAMES utf8mb4;';
+        $lines[] = 'SET FOREIGN_KEY_CHECKS = 0;';
+        $lines[] = '';
+        $pdo = $db->pdo();
+        $tables = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($tables as $tbl) {
+            $lines[] = "-- Table: `{$tbl}`";
+            $lines[] = "TRUNCATE TABLE `{$tbl}`;";
+            $rows = $pdo->query("SELECT * FROM `{$tbl}`")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rows as $row) {
+                $cols = implode(', ', array_map(fn($c) => "`{$c}`", array_keys($row)));
+                $vals = implode(', ', array_map(fn($v) => $v === null ? 'NULL' : $pdo->quote((string)$v), array_values($row)));
+                $lines[] = "INSERT INTO `{$tbl}` ({$cols}) VALUES ({$vals});";
+            }
+            $lines[] = '';
+        }
+        $lines[] = 'SET FOREIGN_KEY_CHECKS = 1;';
+        $lines[] = '-- Backup complete. Tables: ' . count($tables) . '. Rows archived.';
+        file_put_contents($backupFile, implode("\n", $lines));
+    } else {
+        // JSON backup — zip all .json files from data/
+        $backupFile = $backupDir . '/' . $label . '.zip';
+        $zip = new ZipArchive();
+        if ($zip->open($backupFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            throw new RuntimeException('Cannot create backup ZIP: ' . $backupFile);
+        }
+        $jsonFiles = glob(DATA_DIR . '/*.json') ?: [];
+        // Also include subdirs like data/db_config.json, data/schema etc
+        foreach ($jsonFiles as $jf) {
+            $zip->addFile($jf, basename($jf));
+        }
+        // Also backup any .setup_token and .attr_marker (non-sensitive state files)
+        foreach (['.setup_token', '.attr_marker'] as $dotFile) {
+            $fp = DATA_DIR . '/' . $dotFile;
+            if (file_exists($fp)) $zip->addFile($fp, $dotFile);
+        }
+        $zip->close();
+        if (!file_exists($backupFile) || filesize($backupFile) < 22) {
+            // 22 bytes = minimum valid ZIP; if only end-of-central-dir, data was empty
+            // Not a fatal error — data dir may legitimately be empty on fresh installs
+        }
+    }
+
+    return $backupFile;
+}
+
+function toVersionSlug(string $v): string {
+    return preg_replace('/[^a-z0-9._-]/i', '_', ltrim($v, 'v'));
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
@@ -451,6 +532,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Update session expired. Please start over.';
         } else {
             try {
+                // ── STEP 0: Mandatory pre-upgrade backup ─────────────────────
+                // Backup runs BEFORE any file is overwritten.
+                // If backup fails we abort — data safety first.
+                $backupFile = null;
+                try {
+                    $backupFile = preUpgradeBackup($currentVersion, ltrim($release['tag'], 'v'));
+                } catch (RuntimeException $backupEx) {
+                    throw new RuntimeException('Pre-upgrade backup failed: ' . $backupEx->getMessage() . '. Update aborted to protect your data. Fix the data/ directory permissions and try again.');
+                }
+
                 $applyResult = applyUpdate(UPDATE_TMP_DIR, $analysis);
 
                 // Clean up
@@ -474,12 +565,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
+                $cleanTag = ltrim($release['tag'], 'v');
+                // Store backup path in session so the page can offer a download link
+                if ($backupFile && file_exists($backupFile)) {
+                    $_SESSION['sw_backup_file'] = $backupFile;
+                    $_SESSION['sw_backup_name'] = basename($backupFile);
+                }
+
                 if (empty($applyResult['errors'])) {
-                    setFlash('success', 'Update to v' . $release['tag'] . ' applied successfully! ' . $applyResult['applied'] . ' file(s) updated.');
+                    setFlash('success', 'Update to v' . $cleanTag . ' applied successfully! ' . $applyResult['applied'] . ' file(s) updated. A pre-upgrade backup was saved — download it now from the button below.');
                 } else {
                     setFlash('warning', 'Update applied with ' . count($applyResult['errors']) . ' error(s): ' . implode('; ', array_slice($applyResult['errors'], 0, 3)));
                 }
-                header('Location: index.php?p=sw_update');
+                // Redirect to backup download endpoint — forces browser to save the backup
+                header('Location: index.php?p=sw_update&action=dl_backup');
                 exit;
 
             } catch (RuntimeException $e) {
@@ -496,6 +595,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: index.php?p=sw_update');
         exit;
     }
+}
+
+// ── dl_backup: force-download the pre-upgrade backup ─────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && get('action') === 'dl_backup') {
+    $backupFile = $_SESSION['sw_backup_file'] ?? '';
+    $backupName = $_SESSION['sw_backup_name'] ?? 'drxstore_backup.zip';
+    if ($backupFile && file_exists($backupFile) && str_starts_with(realpath($backupFile), realpath(DATA_DIR))) {
+        // Validate path is strictly inside data/backups — no traversal
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="' . preg_replace('/[^a-z0-9._-]/i', '_', $backupName) . '"');
+        header('Content-Length: ' . filesize($backupFile));
+        header('Cache-Control: no-cache, no-store, must-revalidate');
+        header('Pragma: no-cache');
+        // Keep session backup reference alive so user can re-download from the page
+        readfile($backupFile);
+        exit;
+    }
+    // Backup file missing — just redirect to update page
+    header('Location: index.php?p=sw_update');
+    exit;
 }
 
 // On GET — restore state from session if in middle of flow
@@ -516,7 +635,7 @@ adminHeader('Software Update', 'sw_update');
 ?>
 <div class="page-hdr">
   <div>
-    <div class="page-title">&#128257; Software Update</div>
+    <div class="page-title"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:middle;opacity:.7"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>Software Update</div>
     <div class="page-sub">Keep DRXStore up to date from the official GitHub release</div>
   </div>
   <a href="<?=GITHUB_REPO_URL?>" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">
@@ -529,15 +648,33 @@ adminHeader('Software Update', 'sw_update');
 <div class="alert alert-danger"><span class="alert-body"><?=e($error)?></span></div>
 <?php endif; ?>
 
+<?php
+// Show re-download button if a backup was created this session
+$_swBackupFile = $_SESSION['sw_backup_file'] ?? '';
+$_swBackupName = $_SESSION['sw_backup_name'] ?? '';
+if ($_swBackupFile && file_exists($_swBackupFile)):
+?>
+<div class="alert alert-success" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+  <span class="alert-body">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:middle"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+    Pre-upgrade backup saved: <code style="font-size:.8rem"><?=e(basename($_swBackupFile))?></code>
+  </span>
+  <a href="index.php?p=sw_update&action=dl_backup" class="btn btn-primary btn-sm" style="flex-shrink:0">
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:middle"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    Download Backup
+  </a>
+</div>
+<?php endif; ?>
+
 <!-- ── Current version card ───────────────────────────────────────────────── -->
 <div class="dash-grid" style="margin-bottom:20px">
   <div class="card">
     <div class="card-hdr"><div class="card-title">Installed Version</div></div>
     <div class="card-body" style="display:flex;align-items:center;gap:16px">
-      <div style="width:52px;height:52px;background:var(--g1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">&#128230;</div>
+      <div style="width:52px;height:52px;background:var(--g1);border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="12" y1="22" x2="12" y2="12"/></svg></div>
       <div>
         <div style="font-size:1.5rem;font-weight:700;color:var(--acc)">v<?=e($currentVersion)?></div>
-        <div style="font-size:.8rem;color:var(--g5)">DRXStore · <?=e(APP_NAME)?></div>
+        <div style="font-size:.8rem;color:var(--g5)">DRXStore</div>
       </div>
     </div>
   </div>
@@ -548,8 +685,9 @@ adminHeader('Software Update', 'sw_update');
       <div><strong>Repository:</strong> <a href="<?=GITHUB_REPO_URL?>" target="_blank" rel="noopener" style="color:var(--acc)">github.com/psvineet/drxstore</a></div>
       <div><strong>Channel:</strong> Latest stable release</div>
       <div><strong>Security:</strong> Downloads only from <code>github.com</code></div>
-      <div style="margin-top:8px;padding:8px 10px;background:var(--g1);border-radius:var(--rl);font-size:.76rem">
-        &#128274; Your <code>data/</code> and <code>config/</code> folders are never touched during updates.
+      <div style="margin-top:8px;padding:8px 10px;background:var(--g1);border-radius:var(--rl);font-size:.76rem;display:flex;align-items:center;gap:6px">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Your <code>data/</code> and <code>config/</code> folders are never touched during updates.
       </div>
     </div>
   </div>
@@ -564,10 +702,11 @@ adminHeader('Software Update', 'sw_update');
       <div class="card-hdr">
         <div>
           <div class="card-title">
+            <?php $cleanReleaseTag = ltrim($release['tag'], 'v'); ?>
             <?php if ($isNewer): ?>
-              &#128640; New Release Available: v<?=e($release['tag'])?>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:middle"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>New Release Available: v<?=e($cleanReleaseTag)?>
             <?php else: ?>
-              &#10003; You are up to date
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:middle"><polyline points="20 6 9 17 4 12"/></svg>You are up to date
             <?php endif; ?>
           </div>
           <div style="font-size:.76rem;color:var(--g5)">
@@ -601,7 +740,7 @@ adminHeader('Software Update', 'sw_update');
           </span>
         </div>
         <?php else: ?>
-        <p style="margin-top:12px;font-size:.83rem;color:var(--g5)">Current install (v<?=e($currentVersion)?>) is already the latest release.</p>
+        <p style="margin-top:12px;font-size:.83rem;color:var(--g5)">Current install (v<?=e($currentVersion)?>) is already the latest release (v<?=e($cleanReleaseTag)?>).</p>
         <?php endif; ?>
       </div>
     </div>
@@ -630,7 +769,8 @@ adminHeader('Software Update', 'sw_update');
 <div class="card">
   <div class="card-hdr">
     <div>
-      <div class="card-title">Review Update: v<?=e($currentVersion)?> → v<?=e($release['tag'] ?? '?')?></div>
+      <?php $reviewTag = ltrim($release['tag'] ?? '', 'v'); ?>
+      <div class="card-title">Review Update: v<?=e($currentVersion)?> &rarr; v<?=e($reviewTag ?: '?')?></div>
       <div style="font-size:.76rem;color:var(--g5)"><?=count($toReplace)?> files to update · <?=count($toAdd)?> new files · <?=count($toSkip)?> skipped</div>
     </div>
     <form method="POST">
@@ -651,8 +791,8 @@ adminHeader('Software Update', 'sw_update');
     <?php if (count($toSkip)): ?>
     <span class="chip">&#8634; <?=count($toSkip)?> skip</span>
     <?php endif; ?>
-    <span class="chip" style="margin-left:auto;background:var(--g1);color:var(--g6);font-size:.72rem">
-      &#128274; data/ &amp; config/ not touched
+    <span class="chip" style="margin-left:auto;background:var(--g1);color:var(--g6);font-size:.72rem;display:inline-flex;align-items:center;gap:4px">
+      <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>data/ &amp; config/ not touched
     </span>
   </div>
 
@@ -689,7 +829,7 @@ adminHeader('Software Update', 'sw_update');
   <!-- Confirm bar -->
   <div style="padding:14px 16px;border-top:1px solid var(--g3);background:var(--g1);border-radius:0 0 var(--rc) var(--rc)">
     <div style="font-size:.8rem;color:var(--g6);margin-bottom:12px">
-      <strong>&#9888; Important:</strong>
+      <strong><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Important:</strong>
       This will overwrite existing files listed above. A backup of the current version is recommended before proceeding.
       Your data, settings and medicines database will <strong>not</strong> be affected.
     </div>
@@ -697,8 +837,8 @@ adminHeader('Software Update', 'sw_update');
       <?=csrfField()?>
       <input type="hidden" name="action" value="apply">
       <button type="submit" class="btn btn-success"
-        onclick="return confirm('Apply the update to v<?=e($release['tag'] ?? '')?>? This will replace <?=count($toReplace)?> file(s). Continue?')">
-        &#10003; Apply Update Now
+        onclick="return confirm('Apply the update to v<?=e(ltrim($release['tag'] ?? '','v'))?>? This will replace <?=count($toReplace)?> file(s). Continue?')">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:middle"><polyline points="20 6 9 17 4 12"/></svg>Apply Update Now
       </button>
     </form>
     <form method="POST" style="display:inline;margin-left:8px">

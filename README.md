@@ -1,8 +1,8 @@
-# DRXStore v3.0.1 — Complete Pharmacy Management System
+# DRXStore v3.1.0 — Complete Pharmacy Management System
 
 **Developed by Vineet | ci.vps@proton.me**
 
-> Version 3.0.1 is a security-hardened release. All 19 reported issues have been resolved. Upgrading from 2.0.0 is strongly recommended.
+> Version 3.1.0 adds strip/packing-based stock and sales entry with auto unit calculation, fixes all v3.0.1 display bugs, and replaces emoji with SVG icons throughout. Upgrading from 3.0.x is recommended.
 
 ---
 
@@ -130,4 +130,4 @@ If you have questions, need assistance with installation, or want to suggest new
 
 ---
 
-*DRXStore v3.0.1 — Built with care by Vineet*
+*DRXStore v3.1.0 — Built with care by Vineet*

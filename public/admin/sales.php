@@ -75,12 +75,26 @@ adminHeader('New Sale / POS','sales');
           </select>
         </div>
       </div>
-      <div style="display:flex;gap:20px;padding:10px 14px;background:var(--g1);border-radius:var(--rl);margin-bottom:12px;font-size:.83rem">
+      <div style="display:flex;gap:20px;padding:10px 14px;background:var(--g1);border-radius:var(--rl);margin-bottom:12px;font-size:.83rem;flex-wrap:wrap">
         <div><span class="text-muted">Stock:</span> <strong id="stock_display">—</strong></div>
-        <div><span class="text-muted">MRP:</span> <strong id="mrp_display">—</strong></div>
+        <div><span class="text-muted">MRP/Unit:</span> <strong id="mrp_display">—</strong></div>
+        <div id="strip_info_wrap" style="display:none"><span class="text-muted">Pack:</span> <strong id="strip_info">—</strong></div>
       </div>
+      <!-- Hidden strip data -->
+      <input type="hidden" name="strip_qty" id="pos_strip_qty" value="1">
+      <input type="hidden" name="qty_mode" id="pos_qty_mode_hidden" value="unit">
       <div class="form-row-2">
-        <div class="form-group"><label class="form-label">Quantity</label><input class="form-control" type="number" name="qty" id="qty" min="1" value="1" required></div>
+        <div class="form-group">
+          <label class="form-label">Quantity &amp; Mode</label>
+          <div class="flex gap-1 items-center">
+            <input class="form-control" type="number" name="qty" id="qty" min="1" value="1" required oninput="posUpdateQtyCalc()" style="max-width:100px">
+            <select class="form-control" id="pos_qty_mode" onchange="posToggleMode()" style="width:auto;min-width:90px">
+              <option value="unit">Units</option>
+              <option value="strip" id="pos_strip_option" disabled>Strips</option>
+            </select>
+          </div>
+          <div id="pos_qty_hint" class="form-hint" style="color:var(--teal);margin-top:4px"></div>
+        </div>
         <div class="form-group"><label class="form-label">Discount (applies to whole sale)</label>
           <div class="flex gap-1">
             <select class="form-control" name="discount_id" >
@@ -126,9 +140,16 @@ adminHeader('New Sale / POS','sales');
 <?php if(empty($_SESSION['cart'])):?>
   <div class="empty-state" style="padding:30px"><p>Cart is empty</p></div>
 <?php else:?>
-  <?php foreach($_SESSION['cart'] as $i=>$item):?>
+  <?php foreach($_SESSION['cart'] as $i=>$item):
+    $iStrips=(int)($item['strips']??0); $iSQ=(int)($item['strip_qty']??1);
+    if($iStrips>0&&$iSQ>1){
+      $cartSub_line='Batch '.e($item['batch']).' | '.$iStrips.' strips × '.$iSQ.' = '.$item['qty'].' units @ '.money($item['mrp']??0).'/unit';
+    } else {
+      $cartSub_line='Batch '.e($item['batch']).' | '.$item['qty'].' units @ '.money($item['mrp']??0).'/unit';
+    }
+  ?>
   <div class="cart-row">
-    <div style="flex:1;min-width:0"><div class="cart-name truncate"><?=e($item['name'])?></div><div class="cart-sub">Batch <?=e($item['batch'])?> | Qty <?=$item['qty']?> <?=money($item['mrp']??0)?></div></div>
+    <div style="flex:1;min-width:0"><div class="cart-name truncate"><?=e($item['name'])?></div><div class="cart-sub"><?=$cartSub_line?></div></div>
     <div class="fw-600 text-sm" style="white-space:nowrap"><?=money($item['price'])?></div>
     <a href="index.php?p=cart_remove&idx=<?=$i?>" class="btn btn-danger btn-sm" style="margin-left:4px">Remove</a>
   </div>
@@ -151,6 +172,127 @@ adminHeader('New Sale / POS','sales');
 </div></div>
 </div>
 <script>
-// Discount applied via cart_add form submission
+function loadBatches(){
+  var mid=document.getElementById('medicine_id');
+  if(!mid||!mid.value){return;}
+  fetch('index.php?p=get_batches&mid='+mid.value).then(r=>r.text()).then(h=>{
+    var bs=document.getElementById('batch_id');
+    if(bs){
+      bs.innerHTML=h;
+      // Auto-select first real batch when only one is available
+      if(bs.options.length===2) bs.selectedIndex=1;
+      updateBatchInfo();
+    }
+  });
+}
+function updateBatchInfo(){
+  var bs=document.getElementById('batch_id');
+  var sd=document.getElementById('stock_display'),md=document.getElementById('mrp_display');
+  var siWrap=document.getElementById('strip_info_wrap'),si=document.getElementById('strip_info');
+  var stripOpt=document.getElementById('pos_strip_option');
+  var modeEl=document.getElementById('pos_qty_mode');
+
+  if(!bs||!bs.value){
+    if(sd)sd.textContent='—'; if(md)md.textContent='—';
+    resetStripUI(); return;
+  }
+  var opt=bs.options[bs.selectedIndex];
+  if(!opt||!opt.value){
+    if(sd)sd.textContent='—'; if(md)md.textContent='—';
+    resetStripUI(); return;
+  }
+
+  var stock=parseInt(opt.getAttribute('data-stock')||'0')||0;
+  var mrp=parseFloat(opt.getAttribute('data-mrp')||'0');
+  var sq=parseInt(opt.getAttribute('data-strip-qty')||'1')||1;
+  var pt=opt.getAttribute('data-packing')||'';
+
+  // Update info bar
+  if(sd)sd.textContent=stock+' units'+(sq>1?' ('+Math.floor(stock/sq)+' strips)':'');
+  if(md)md.textContent='₹'+mrp.toFixed(2);
+
+  // Store strip_qty in hidden field
+  var stripHidden=document.getElementById('pos_strip_qty');
+  if(stripHidden)stripHidden.value=sq;
+
+  // Show/hide pack info
+  if(sq>1){
+    if(siWrap)siWrap.style.display='';
+    if(si)si.textContent=(pt||'Pack')+' · '+sq+' units/strip · ₹'+(mrp*sq).toFixed(2)+'/strip';
+    // Enable Strips option
+    if(stripOpt){stripOpt.disabled=false; stripOpt.textContent='Strips ('+sq+'/strip)';}
+  } else {
+    if(siWrap)siWrap.style.display='none';
+    // Disable Strips option and reset to unit
+    if(stripOpt){stripOpt.disabled=true; stripOpt.textContent='Strips';}
+    if(modeEl&&modeEl.value==='strip')modeEl.value='unit';
+  }
+  posToggleMode();
+}
+function resetStripUI(){
+  var stripHidden=document.getElementById('pos_strip_qty');
+  if(stripHidden)stripHidden.value=1;
+  var stripOpt=document.getElementById('pos_strip_option');
+  if(stripOpt){stripOpt.disabled=true; stripOpt.textContent='Strips';}
+  var mode=document.getElementById('pos_qty_mode');
+  if(mode)mode.value='unit';
+  var siWrap=document.getElementById('strip_info_wrap');
+  if(siWrap)siWrap.style.display='none';
+  posToggleMode();
+}
+function posToggleMode(){
+  var sq=parseInt((document.getElementById('pos_strip_qty')||{}).value||1)||1;
+  var mode=document.getElementById('pos_qty_mode');
+  var modeVal=mode?mode.value:'unit';
+  var modeHidden=document.getElementById('pos_qty_mode_hidden');
+  if(modeHidden)modeHidden.value=modeVal;
+  posUpdateQtyCalc();
+}
+function posUpdateQtyCalc(){
+  var sq=parseInt((document.getElementById('pos_strip_qty')||{}).value||1)||1;
+  var mode=document.getElementById('pos_qty_mode');
+  var modeVal=mode?mode.value:'unit';
+  var qtyEl=document.getElementById('qty');
+  var hint=document.getElementById('pos_qty_hint');
+  if(!qtyEl||!hint) return;
+  if(modeVal==='strip'&&sq>1){
+    var strips=parseInt(qtyEl.value)||0;
+    var units=strips*sq;
+    hint.innerHTML=strips+' strip'+(strips!==1?'s':'')+' &times; '+sq+' = <strong>'+units+' units</strong> | Total: <strong>₹'+(units*(parseFloat(document.getElementById('mrp_display')&&document.getElementById('mrp_display').textContent.replace('₹','')||0))).toFixed(2)+'</strong>';
+  } else {
+    var mrpVal=parseFloat((document.getElementById('mrp_display')||{}).textContent&&document.getElementById('mrp_display').textContent.replace('₹','')||0);
+    var uqty=parseInt(qtyEl.value)||0;
+    hint.innerHTML=uqty>0&&mrpVal>0?'Total: <strong>₹'+(uqty*mrpVal).toFixed(2)+'</strong>':'';
+  }
+}
+// Intercept form submit: convert strip qty → unit qty before POST
+document.addEventListener('DOMContentLoaded',function(){
+  // Strips option disabled by default until a strip batch is selected
+  var stripOpt=document.getElementById('pos_strip_option');
+  if(stripOpt)stripOpt.disabled=true;
+
+  // Bind via addEventListener so searchable-widget replacements still fire these
+  var batchEl=document.getElementById('batch_id');
+  if(batchEl) batchEl.addEventListener('change', updateBatchInfo);
+  var modeEl=document.getElementById('pos_qty_mode');
+  if(modeEl) modeEl.addEventListener('change', posToggleMode);
+
+  var form=document.querySelector('form[action="index.php?p=cart_add"]');
+  if(form){
+    form.addEventListener('submit',function(e){
+      var sq=parseInt((document.getElementById('pos_strip_qty')||{}).value||1)||1;
+      var mode=document.getElementById('pos_qty_mode');
+      var modeVal=mode?mode.value:'unit';
+      var qtyEl=document.getElementById('qty');
+      if(modeVal==='strip'&&sq>1&&qtyEl){
+        var strips=parseInt(qtyEl.value)||0;
+        if(strips<1){e.preventDefault();alert('Enter at least 1 strip.');return;}
+        qtyEl.value=strips*sq; // convert to units before POST
+      }
+      var modeHidden=document.getElementById('pos_qty_mode_hidden');
+      if(modeHidden)modeHidden.value=modeVal;
+    });
+  }
+});
 </script>
 <?php adminFooter();?>

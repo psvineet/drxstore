@@ -97,9 +97,11 @@ class MySQLDB {
                 'mfg_date'       => 'DATE',
                 'expiry_date'    => 'DATE',
                 'quantity'       => 'INT DEFAULT 0',
-                'purchase_price' => 'DECIMAL(10,2)',
-                'mrp'            => 'DECIMAL(10,2)',
+                'purchase_price' => 'DECIMAL(10,4)',
+                'mrp'            => 'DECIMAL(10,4)',
                 'supplier_id'    => 'INT',
+                'strip_qty'      => 'INT DEFAULT 1',
+                'packing_type'   => 'VARCHAR(50)',
                 'updated_at'     => 'DATETIME',
                 'created_at'     => 'DATETIME',
             ],
@@ -169,7 +171,7 @@ class MySQLDB {
                 'medicine_id' => 'INT',
                 'batch_id'    => 'INT',
                 'quantity'    => 'INT',
-                'mrp'         => 'DECIMAL(10,2)',
+                'mrp'         => 'DECIMAL(10,4)',
                 'price'       => 'DECIMAL(12,2)',
             ],
             'purchase_orders' => [
@@ -190,7 +192,7 @@ class MySQLDB {
                 'medicine_id'    => 'INT',
                 'quantity'       => 'INT',
                 'price'          => 'DECIMAL(10,2)',
-                'mrp'            => 'DECIMAL(10,2)',
+                'mrp'            => 'DECIMAL(10,4)',
                 'received_qty'   => 'INT DEFAULT 0',
                 'updated_at'     => 'DATETIME',
             ],
@@ -340,6 +342,30 @@ class MySQLDB {
                 }
             }
         }
+
+        // ── v3.1.0 migration: upgrade mrp column precision ────────────────────
+        // DECIMAL(10,2) cannot store 4-decimal per-unit MRP; upgrade to DECIMAL(10,4).
+        // Applied to batches, sales_items, and po_items.
+        foreach (['batches', 'sales_items', 'po_items'] as $_mrpTbl) {
+            try {
+                $col = $this->pdo->query("SHOW COLUMNS FROM `{$_mrpTbl}` LIKE 'mrp'")->fetch(PDO::FETCH_ASSOC);
+                if ($col && preg_match('/decimal\(10,2\)/i', $col['Type'] ?? '')) {
+                    $this->pdo->exec("ALTER TABLE `{$_mrpTbl}` MODIFY COLUMN `mrp` DECIMAL(10,4)");
+                }
+            } catch (Exception $e) {}
+        }
+
+        // ── v3.1.1 migration: upgrade purchase_price column precision ─────────
+        // DECIMAL(10,2) loses sub-unit precision when storing per-unit cost of
+        // strip-based medicines (e.g. ₹120/strip ÷ 10 = ₹12.0000/unit is fine,
+        // but ₹55/strip ÷ 10 = ₹5.5000 rounds to ₹5.50 — not harmful, but
+        // ₹37/strip ÷ 7 = ₹5.2857 would be truncated). Upgrade to DECIMAL(10,4).
+        try {
+            $ppCol = $this->pdo->query("SHOW COLUMNS FROM `batches` LIKE 'purchase_price'")->fetch(PDO::FETCH_ASSOC);
+            if ($ppCol && preg_match('/decimal\(10,2\)/i', $ppCol['Type'] ?? '')) {
+                $this->pdo->exec("ALTER TABLE `batches` MODIFY COLUMN `purchase_price` DECIMAL(10,4)");
+            }
+        } catch (Exception $e) {}
 
         // ── Self-heal corrupted currency ──────────────────────────────────
         try {
