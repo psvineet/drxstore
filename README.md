@@ -2,7 +2,7 @@
 
 **Developed by Vineet | ci.vps@proton.me**
 
-> Version 3.1.0 adds strip/packing-based stock and sales entry with auto unit calculation, fixes all v3.0.1 display bugs, and replaces emoji with SVG icons throughout. Upgrading from 3.0.x is recommended.
+> Version 3.1.0 adds strip/packing-based stock and sales entry with auto unit calculation, fixes all v3.0.1 display bugs, and replaces emoji with SVG icons throughout, and patches an authentication gap in the batch lookup endpoint (`get_batches.php`). Upgrading from 3.0.x is recommended.
 
 ---
 
@@ -25,11 +25,11 @@
 | **Dashboard** | Live stats, 7-day sales chart, low-stock alerts, top medicines, recent activity |
 | **Medicines** | Full CRUD, search, dosage forms, HSN codes, GST%, rack location tracking |
 | **Import CSV** | Bulk import medicines from CSV with preview & duplicate detection |
-| **Batches & Stock** | Full batch management, expiry tracking, unit pricing, status filters |
+| **Batches & Stock** | Full batch management, expiry tracking, unit/strip pricing, status filters |
 | **Stock Adjustment** | Add/Remove inventory with reason codes & audit trail |
 | **Suppliers** | Manage suppliers, auto-create portal accounts, automated credential email |
 | **Purchase Orders** | Create POs, notify suppliers via email, mark stock as received |
-| **POS / Billing** | Interactive cart, customer selection, unit batch picker, live MRP calculation |
+| **POS / Billing** | Interactive cart, customer selection, unit/strip batch picker, live MRP calculation |
 | **Payment Methods** | Cash, UPI (reference ID), Cheque (bank & date), Card, Credit ledger |
 | **Discounts** | Flat or percentage-based discount per sale |
 | **Sales History** | Filter by date/customer, view full invoice, print customer receipts |
@@ -104,11 +104,11 @@ drxstore/
 
 ## Security
 
-DRXStore follows strict security guidelines. Version 3.0.0 resolved 19 security issues across critical, high, medium, and low severity tiers. Refer to [SECURITY.md](SECURITY.md) for vulnerability disclosure policies and [CHANGELOG.md](CHANGELOG.md) for complete patch details.
+DRXStore follows strict security guidelines. Version **3.0.0** resolved 19 security issues across critical, high, medium, and low severity tiers, and **v3.1.0** resolves an unauthenticated inventory enumeration issue (`CWE-306` / `CWE-200`) on `get_batches.php` by enforcing `requireStaff()`. Refer to [SECURITY.md](SECURITY.md) for vulnerability disclosure policies and [CHANGELOG.md](CHANGELOG.md) for complete patch details.
 
 Key protections built into DRXStore:
 
-- Strict role-verified session checks (`requireAdmin()`, `requireSupplier()`, `requireCustomer()`) on all protected pages
+- Strict role-verified session checks (`requireAdmin()`, `requireStaff()`, `requireSupplier()`, `requireCustomer()`) on all protected pages and AJAX endpoints
 - Anti-CSRF token verification on all POST forms and sensitive GET operations
 - Parameterised database queries with automatic `e()` HTML escaping on output
 - **AES-256-GCM** encryption for stored SMTP credentials at rest
