@@ -4,7 +4,7 @@
 
 | Version | Supported | Notes |
 | :--- | :--- | :--- |
-| **3.0.x** | Yes | Current active release |
+| **3.0.x** & **3.1.x**| Yes | Current active release |
 | **2.0.x** | No | End of Life; upgrade immediately |
 
 ---
