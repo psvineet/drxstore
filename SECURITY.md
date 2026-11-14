@@ -32,6 +32,19 @@ We follow a **90-day coordinated disclosure window** from the date of first cont
 
 ## Disclosure History
 
+### 3.1.0 — November 2026
+* **Reported by:** Peter Wilfahrt ([GitHub](https://github.com/p-w) | [Web](https://pw.is))
+* **Overview:** Peter identified missing authentication on the `get_batches` endpoint (`public/admin/get_batches.php`), which called `startSession()` instead of `requireStaff()`, allowing unauthenticated inventory enumeration (batch numbers, stock quantities, MRPs, and expiry dates). He reported the issue privately via GitHub Private Vulnerability Reporting with a ready-to-apply patch.
+
+| ID | Severity | Issue Summary |
+| :--- | :--- | :--- |
+| **M1** | **Medium** | **Missing Authentication:** `public/admin/get_batches.php` lacked a `requireStaff()` gate, allowing unauthenticated requests to enumerate active batch metadata via `mid` parameter (`CWE-306` / `CWE-200`). |
+
+* **CVSS v3.1 Score:** **5.3** (`CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N`)
+* **CWE References:** `CWE-306` (Missing Authentication for Critical Function), `CWE-200` (Exposure of Sensitive Information)
+
+---
+
 ### 3.0.0 — October 2026
 * **Reported by:** Anil Kumar Voleti ([LinkedIn Profile](https://www.linkedin.com/in/voleti-anil/))
 * **Overview:** Anil identified two critical vulnerabilities in DRXStore 2.0.0 through independent research on a local installation. He reported them privately, coordinated the timeline, and performed independent patch verification against the `v3.0.0` release.

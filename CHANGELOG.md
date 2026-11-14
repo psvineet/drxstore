@@ -6,6 +6,14 @@ All notable changes to DRXStore are documented here.
 
 ## [3.1.0] — 2026-11-14
 
+### Security Fixes
+
+- **Missing authentication on `get_batches.php` (Medium):** `public/admin/get_batches.php` called `startSession()` without verifying staff/admin authentication (`requireStaff()`), allowing unauthenticated requests via `?p=get_batches&mid=<id>` to enumerate active batch numbers, stock counts, MRPs, packing types, and expiry dates (`CWE-306` / `CWE-200`, CVSS 5.3). Replaced `startSession()` with `requireStaff()`.
+
+### Acknowledgements
+
+Security issue in 3.1.0 was reported by **Peter Wilfahrt** ([GitHub](https://github.com/p-w) | [Web](https://pw.is)) through GitHub Private Vulnerability Reporting. Thank you.
+
 ### UI Changes
 
 - **Favicon changed from `Rx` to `Dx`** across the admin portal.
